@@ -7,6 +7,7 @@ import 'package:alhamra_1/features/profile/screens/informasi_aplikasi_page.dart'
 import 'package:alhamra_1/features/profile/screens/ketentuan_layanan_page.dart';
 import 'package:alhamra_1/features/shared/widgets/language_switcher.dart';
 import 'package:alhamra_1/features/shared/widgets/user_avatar.dart';
+import 'package:alhamra_1/features/shared/widgets/custom_app_bar.dart';
 import 'package:alhamra_1/core/utils/app_styles.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -60,69 +61,85 @@ class ProfilePage extends StatelessWidget {
     final currentUser = authProvider.user;
     final selectedStudent = authProvider.selectedStudent; // Mengambil data dari provider
     return Scaffold(
-      backgroundColor: AppStyles.greyColor,
-      appBar: AppBar(
-        title: Text(localizations.akun),
-        backgroundColor: AppStyles.primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
+      backgroundColor: AppStyles.primaryColor,
+      appBar: CustomAppBar(
+        title: localizations.akun,
+        backgroundColor: Colors.transparent,
       ),
       body: currentUser == null
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Padding(
-                padding: AppStyles.getResponsivePadding(context),
-                child: Column(
-                  children: [
-                    _buildProfileHeader(context, currentUser, selectedStudent),
-                    const SizedBox(height: 12),
-                    _buildSelectedStudentCard(context, selectedStudent),
-                    const SizedBox(height: 20),
-                    _buildSection(context,
-                      title: localizations.akun,
-                      children: [
-                        _buildMenuItem(context, Icons.people_outline, localizations.daftarAnak, () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) => const DaftarAnakPage()),
-                          );
-                        }),
-                        const LanguageSwitcher(showLabel: true, isCompact: false),
-                      ],
+          : Column(
+              children: [
+                const SizedBox(height: 16),
+                Expanded(
+                  child: Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF5F7FA),
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(30),
+                        topRight: Radius.circular(30),
+                      ),
                     ),
-                    _buildSection(context,
-                      title: localizations.keamanan,
-                      children: [
-                        _buildMenuItem(context, Icons.lock_outline, localizations.ubahKataSandi, () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) => const UbahKataSandiPage()),
-                          );
-                        }),
-                        _buildMenuItem(context, Icons.info_outline, localizations.tentangAplikasi, () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) => const InformasiAplikasiPage()),
-                          );
-                        }),
-                      ],
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        children: [
+                          _buildProfileHeader(context, currentUser, selectedStudent),
+                          const SizedBox(height: 12),
+                          _buildSelectedStudentCard(context, selectedStudent),
+                          const SizedBox(height: 20),
+                          _buildSection(
+                            context,
+                            title: localizations.akun,
+                            children: [
+                              _buildMenuItem(context, Icons.people_outline, localizations.daftarAnak, () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (context) => const DaftarAnakPage()),
+                                );
+                              }),
+                              const LanguageSwitcher(showLabel: true, isCompact: false),
+                            ],
+                          ),
+                          _buildSection(
+                            context,
+                            title: localizations.keamanan,
+                            children: [
+                              _buildMenuItem(context, Icons.lock_outline, localizations.ubahKataSandi, () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (context) => const UbahKataSandiPage()),
+                                );
+                              }),
+                              _buildMenuItem(context, Icons.info_outline, localizations.tentangAplikasi, () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (context) => const InformasiAplikasiPage()),
+                                );
+                              }),
+                            ],
+                          ),
+                          _buildSection(
+                            context,
+                            title: localizations.informasiAplikasi,
+                            children: [
+                              _buildMenuItem(context, Icons.description_outlined, localizations.ketentuanLayanan, () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (context) => const KetentuanLayananPage()),
+                                );
+                              }),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          _buildLogoutButton(context),
+                        ],
+                      ),
                     ),
-                    _buildSection(context,
-                      title: localizations.informasiAplikasi,
-                      children: [
-                        _buildMenuItem(context, Icons.description_outlined, localizations.ketentuanLayanan, () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) => const KetentuanLayananPage()),
-                          );
-                        }),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLogoutButton(context),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
     );
   }

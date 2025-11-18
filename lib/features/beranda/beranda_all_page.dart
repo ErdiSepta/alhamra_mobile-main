@@ -3,13 +3,16 @@ import '../../core/data/dashboard_data.dart';
 import '../../core/data/student_data.dart';
 import '../../core/localization/app_localizations.dart';
 import '../shared/widgets/search_overlay_widget.dart';
+import '../shared/widgets/student_selection_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 import '../../core/data/payment_service.dart';
 import '../../core/services/odoo_api_service.dart';
 import '../../core/data/pocket_money_service.dart';
 import '../../core/models/pocket_money_history.dart';
+import '../../core/providers/auth_provider.dart';
 
 class BerandaAllPage extends StatefulWidget {
   const BerandaAllPage({super.key});
@@ -24,8 +27,11 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   
   // Santri selection state
   String _selectedSantri = StudentData.defaultStudent;
-  final List<String> _allSantri = StudentData.allStudents;
+  String? _selectedSiswaId;
+  List<String> _childrenNames = const [];
+  final Map<String, String> _nameToId = {};
   bool _isStudentOverlayVisible = false;
+  bool _isLoadingStudents = false;
   String _amountTagihan = 'Rp 0';
   String _amountUangSaku = 'Rp 0';
   double _persentaseLunas = 0.0; // 0..100
@@ -38,7 +44,81 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadBillsTotal();
       _loadPocketMoneyTotal();
+      _initStudentSelection();
     });
+  }
+
+  Future<void> _initStudentSelection() async {
+    setState(() {
+      _isLoadingStudents = true;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedId = prefs.getString('siswa_id');
+      final odoo = OdooApiService();
+      await odoo.loadSession();
+      final children = await odoo.getChildren();
+      final names = <String>[];
+      _nameToId.clear();
+      for (final child in children) {
+        final name = (child['name'] ?? child['nama'] ?? '').toString();
+        final id = (child['id'] ?? child['siswa_id'])?.toString() ?? '';
+        if (name.isEmpty || id.isEmpty) continue;
+        names.add(name);
+        _nameToId[name] = id;
+      }
+
+      String selectedName = _selectedSantri;
+      String? selectedId = savedId;
+
+      if (names.isNotEmpty) {
+        if (selectedId != null) {
+          final matchEntry = _nameToId.entries.firstWhere(
+            (entry) => entry.value == selectedId,
+            orElse: () => const MapEntry('', ''),
+          );
+          if (matchEntry.key.isNotEmpty) {
+            selectedName = matchEntry.key;
+          } else {
+            selectedName = names.first;
+            selectedId = _nameToId[selectedName];
+          }
+        } else {
+          selectedName = names.first;
+          selectedId = _nameToId[selectedName];
+        }
+      }
+
+      if (selectedName.isNotEmpty) {
+        try {
+          context.read<AuthProvider>().selectStudent(selectedName);
+        } catch (_) {}
+      }
+
+      if (selectedId != null && selectedId.isNotEmpty) {
+        await prefs.setString('siswa_id', selectedId);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _childrenNames = names;
+        if (selectedName.isNotEmpty) {
+          _selectedSantri = selectedName;
+        }
+        _selectedSiswaId = selectedId;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _childrenNames = StudentData.allStudents;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingStudents = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadBillsTotal() async {
@@ -71,7 +151,8 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
           }
         } catch (_) {}
       }
-      if (sessionId == null || siswaId == null) return;
+      siswaId ??= _selectedSiswaId;
+      if (sessionId == null || siswaId == null || siswaId.isEmpty) return;
 
       final service = PaymentService();
       final bills = await service.fetchBillsForSiswa(
@@ -175,15 +256,10 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
           SearchOverlayWidget(
             isVisible: _isStudentOverlayVisible,
             title: AppLocalizations.of(context).pilihSantri,
-            items: _allSantri,
+            items: _childrenNames.isEmpty ? StudentData.allStudents : _childrenNames,
             selectedItem: _selectedSantri,
             onItemSelected: (santri) {
-              setState(() {
-                _selectedSantri = santri;
-                _isStudentOverlayVisible = false;
-              });
-              _loadBillsTotal();
-              _loadPocketMoneyTotal();
+              _handleStudentSelection(santri);
             },
             onClose: () {
               setState(() {
@@ -214,77 +290,46 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   }
 
   Widget _buildStudentSelector() {
-    final localizations = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // Avatar
-            CircleAvatar(
-              radius: 20,
-              backgroundImage: NetworkImage(StudentData.defaultAvatarUrl),
-              backgroundColor: Colors.grey[300],
-            ),
-            const SizedBox(width: 12),
-            // Student name
-            Expanded(
-              child: Text(
-                _selectedSantri,
-                style: AppStyles.bodyText(context).copyWith(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
-            ),
-            // Ganti button
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  _isStudentOverlayVisible = true;
-                });
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      localizations.ganti,
-                      style: AppStyles.bodyText(context).copyWith(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppStyles.primaryColor,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.arrow_forward,
-                      size: 16,
-                      color: AppStyles.primaryColor,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+      child: Opacity(
+        opacity: _isLoadingStudents ? 0.5 : 1,
+        child: AbsorbPointer(
+          absorbing: _isLoadingStudents,
+          child: StudentSelectionWidget(
+            selectedStudent: _selectedSantri,
+            students: _childrenNames.isEmpty ? [StudentData.defaultStudent] : _childrenNames,
+            onStudentChanged: _handleStudentSelection,
+            onOverlayVisibilityChanged: (visible) {
+              setState(() {
+                _isStudentOverlayVisible = visible;
+              });
+            },
+            avatarUrl: StudentData.getStudentAvatar(_selectedSantri),
+          ),
         ),
       ),
     );
+  }
+
+  void _handleStudentSelection(String santri) async {
+    setState(() {
+      _selectedSantri = santri;
+      _isStudentOverlayVisible = false;
+    });
+    final id = _nameToId[santri];
+    if (id != null && id.isNotEmpty) {
+      _selectedSiswaId = id;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('siswa_id', id);
+      } catch (_) {}
+    }
+    try {
+      context.read<AuthProvider>().selectStudent(santri);
+    } catch (_) {}
+    _loadBillsTotal();
+    _loadPocketMoneyTotal();
   }
 
   Widget _buildTabBar() {

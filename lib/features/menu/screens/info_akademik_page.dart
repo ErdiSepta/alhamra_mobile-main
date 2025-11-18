@@ -4,6 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/data/class_data.dart';
 import '../../../core/data/student_data.dart';
@@ -12,6 +13,8 @@ import '../../../core/services/odoo_api_service.dart';
 import '../../../core/utils/app_styles.dart';
 import '../../shared/widgets/index.dart';
 import '../../shared/widgets/student_selection_widget.dart';
+import '../../akademik/models/prestasi_model.dart';
+import '../../akademik/services/prestasi_service.dart';
 
 class InfoAkademikPage extends StatefulWidget {
   const InfoAkademikPage({super.key});
@@ -20,7 +23,7 @@ class InfoAkademikPage extends StatefulWidget {
   State<InfoAkademikPage> createState() => _InfoAkademikPageState();
 }
 
-class _InfoAkademikPageState extends State<InfoAkademikPage> {
+class _InfoAkademikPageState extends State<InfoAkademikPage> with TickerProviderStateMixin {
   // Mock Schedule Data (tetap)
   final List<JadwalHarian> _jadwalPelajaran = [
     JadwalHarian(hari: 'Senin', pelajaran: [
@@ -57,6 +60,15 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
   bool _isLoading = true;
   String? _error;
 
+  // State untuk prestasi
+  List<Prestasi> _prestasiList = [];
+  bool _isLoadingPrestasi = false;
+  final PrestasiService _prestasiService = PrestasiService();
+  Set<String> _expandedPrestasiIds = {}; // Track expanded prestasi items
+
+  // Tab Controller
+  late TabController _tabController;
+
   // Profil akademik yang ditampilkan
   String _namaLengkap = '-';
   String _namaPanggilan = '-';
@@ -82,7 +94,14 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _initLoad();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _initLoad() async {
@@ -206,10 +225,34 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
         _penanggungJawab = pickPair(data['penanggung_jawab_id']);
         _isLoading = false;
       });
+      
+      // Load prestasi setelah profile berhasil dimuat
+      await _loadPrestasi();
     } catch (e) {
       setState(() {
         _isLoading = false;
         _error = e.toString();
+      });
+    }
+  }
+
+  // Method untuk load prestasi
+  Future<void> _loadPrestasi() async {
+    if (_selectedSiswaId == null || _selectedSiswaId!.isEmpty) return;
+    
+    setState(() {
+      _isLoadingPrestasi = true;
+    });
+    
+    try {
+      final prestasi = await _prestasiService.getPrestasiBySiswaId(_selectedSiswaId!);
+      setState(() {
+        _prestasiList = prestasi;
+        _isLoadingPrestasi = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoadingPrestasi = false;
       });
     }
   }
@@ -282,6 +325,8 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
                   _isStudentOverlayVisible = false;
                   _isLoading = true;
                   _error = null;
+                  _prestasiList = []; // Reset prestasi saat ganti siswa
+                  _expandedPrestasiIds.clear(); // Reset expanded items
                 });
                 await _loadProfile();
               },
@@ -313,6 +358,8 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
             _selectedSiswaId = id;
             _isLoading = true;
             _error = null;
+            _prestasiList = []; // Reset prestasi saat ganti siswa
+            _expandedPrestasiIds.clear(); // Reset expanded items
           });
           await _loadProfile();
         },
@@ -323,15 +370,61 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
   }
 
   Widget _buildAcademicDetails() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
+    return Container(
+      color: Colors.white,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildDataDiriCard(),
-          const SizedBox(height: 24),
-          _buildKelasCard(),
-          // Jadwal kelas dilewati sementara
+          // Tab Bar (sama seperti StatusPage)
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _tabController,
+              labelColor: AppStyles.primaryColor,
+              unselectedLabelColor: Colors.grey[600],
+              indicatorColor: Colors.blueAccent,
+              indicatorWeight: 2,
+              indicatorSize: TabBarIndicatorSize.tab,
+              labelStyle: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
+              ),
+              tabs: const [
+                Tab(text: 'Informasi'),
+                Tab(text: 'Prestasi'),
+              ],
+            ),
+          ),
+          // Tab Bar View dengan background F5F7FA (sama seperti StatusPage)
+          Expanded(
+            child: Container(
+              color: const Color(0xFFF5F7FA),
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  // Tab Informasi
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildDataDiriCard(),
+                        const SizedBox(height: 24),
+                        _buildKelasCard(),
+                      ],
+                    ),
+                  ),
+                  // Tab Prestasi
+                  _buildPrestasiTab(),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -520,6 +613,484 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> {
       ],
     );
   }
+
+  // Widget untuk tab prestasi
+  Widget _buildPrestasiTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header dengan jumlah prestasi
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Prestasi Santri',
+                style: AppStyles.sectionTitle(context),
+              ),
+              if (_prestasiList.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppStyles.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_prestasiList.length} Prestasi',
+                    style: AppStyles.bodyText(context).copyWith(
+                      color: AppStyles.primaryColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_isLoadingPrestasi)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20.0),
+                child: CircularProgressIndicator(
+                  color: AppStyles.primaryColor,
+                ),
+              ),
+            )
+          else if (_prestasiList.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.emoji_events_outlined,
+                    color: Colors.grey[400],
+                    size: 32,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Belum ada prestasi yang tercatat',
+                      style: AppStyles.bodyText(context).copyWith(
+                        color: Colors.grey[600],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _prestasiList.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final prestasi = _prestasiList[index];
+                return _buildPrestasiItem(prestasi);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  // Widget untuk item prestasi dengan collapse/expand
+  Widget _buildPrestasiItem(Prestasi prestasi) {
+    final isExpanded = _expandedPrestasiIds.contains(prestasi.id);
+    final extraFields = _buildAdditionalPrestasiInfo(prestasi);
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header yang bisa di-click untuk expand/collapse
+          InkWell(
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedPrestasiIds.remove(prestasi.id);
+                } else {
+                  _expandedPrestasiIds.add(prestasi.id);
+                }
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Icon jenis prestasi
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _getJenisColor(prestasi.jenis).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      _getJenisIcon(prestasi.jenis),
+                      color: _getJenisColor(prestasi.jenis),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Informasi singkat
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          prestasi.judul,
+                          style: AppStyles.bodyText(context).copyWith(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: Colors.black87,
+                          ),
+                          maxLines: isExpanded ? null : 2,
+                          overflow: isExpanded ? null : TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            // Badge juara
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _getJuaraColor(prestasi.juara).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: _getJuaraColor(prestasi.juara).withOpacity(0.3),
+                                ),
+                              ),
+                              child: Text(
+                                prestasi.juara,
+                                style: AppStyles.bodyText(context).copyWith(
+                                  color: _getJuaraColor(prestasi.juara),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Badge tingkat
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey[300]!),
+                              ),
+                              child: Text(
+                                _getTingkatLabel(prestasi.tingkat),
+                                style: AppStyles.bodyText(context).copyWith(
+                                  color: Colors.grey[700],
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Tanggal (singkat)
+                            Flexible(
+                              child: Text(
+                                _formatTanggalSingkat(prestasi.tanggalPencapaian),
+                                style: AppStyles.bodyText(context).copyWith(
+                                  color: Colors.grey[600],
+                                  fontSize: 11,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Arrow icon
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[600],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Detail yang expandable
+          if (isExpanded) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                children: [
+                  _buildPrestasiDetailRow(
+                    Icons.calendar_today,
+                    'Tanggal',
+                    prestasi.formattedDate,
+                  ),
+                  const SizedBox(height: 10),
+                  _buildPrestasiDetailRow(
+                    Icons.category,
+                    'Jenis',
+                    _getJenisLabel(prestasi.jenis),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildPrestasiDetailRow(
+                    Icons.star,
+                    'Tingkat',
+                    _getTingkatLabel(prestasi.tingkat),
+                  ),
+                  if (prestasi.penyelenggara != null && prestasi.penyelenggara!.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _buildPrestasiDetailRow(
+                      Icons.business,
+                      'Penyelenggara',
+                      prestasi.penyelenggara!,
+                    ),
+                  ],
+                  if (prestasi.deskripsi.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.description, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            prestasi.deskripsi,
+                            style: AppStyles.bodyText(context).copyWith(
+                              color: Colors.grey[700],
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (extraFields.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    ...extraFields,
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrestasiDetailRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ',
+          style: AppStyles.bodyText(context).copyWith(
+            color: Colors.grey[600],
+            fontSize: 13,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: AppStyles.bodyText(context).copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Helper methods untuk styling
+  Color _getJenisColor(JenisPrestasi jenis) {
+    switch (jenis) {
+      case JenisPrestasi.akademik:
+        return Colors.blue;
+      case JenisPrestasi.non_akademik:
+        return Colors.purple;
+      case JenisPrestasi.seni:
+        return Colors.pink;
+      case JenisPrestasi.olahraga:
+        return Colors.orange;
+      case JenisPrestasi.lainnya:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getJenisIcon(JenisPrestasi jenis) {
+    switch (jenis) {
+      case JenisPrestasi.akademik:
+        return Icons.school;
+      case JenisPrestasi.non_akademik:
+        return Icons.workspace_premium;
+      case JenisPrestasi.seni:
+        return Icons.palette;
+      case JenisPrestasi.olahraga:
+        return Icons.sports_soccer;
+      case JenisPrestasi.lainnya:
+        return Icons.emoji_events;
+    }
+  }
+
+  String _getJenisLabel(JenisPrestasi jenis) {
+    switch (jenis) {
+      case JenisPrestasi.akademik:
+        return 'Akademik';
+      case JenisPrestasi.non_akademik:
+        return 'Non Akademik';
+      case JenisPrestasi.seni:
+        return 'Seni';
+      case JenisPrestasi.olahraga:
+        return 'Olahraga';
+      case JenisPrestasi.lainnya:
+        return 'Lainnya';
+    }
+  }
+
+  String _getTingkatLabel(TingkatPrestasi tingkat) {
+    switch (tingkat) {
+      case TingkatPrestasi.sekolah:
+        return 'Sekolah';
+      case TingkatPrestasi.kecamatan:
+        return 'Kecamatan';
+      case TingkatPrestasi.kabupaten:
+        return 'Kabupaten';
+      case TingkatPrestasi.provinsi:
+        return 'Provinsi';
+      case TingkatPrestasi.nasional:
+        return 'Nasional';
+      case TingkatPrestasi.internasional:
+        return 'Internasional';
+    }
+  }
+
+  Color _getJuaraColor(String juara) {
+    final lowerJuara = juara.toLowerCase();
+    if (lowerJuara.contains('juara 1') || lowerJuara.contains('juara i')) {
+      return Colors.amber.shade700;
+    } else if (lowerJuara.contains('juara 2') || lowerJuara.contains('juara ii')) {
+      return Colors.grey.shade600;
+    } else if (lowerJuara.contains('juara 3') || lowerJuara.contains('juara iii')) {
+      return Colors.brown.shade600;
+    } else {
+      return AppStyles.primaryColor;
+    }
+  }
+
+  // Helper untuk format tanggal singkat
+  String _formatTanggalSingkat(DateTime tanggal) {
+    return DateFormat('dd MMM yyyy', 'id_ID').format(tanggal);
+  }
+
+  List<Widget> _buildAdditionalPrestasiInfo(Prestasi prestasi) {
+    final entries = prestasi.rawData.entries.where((entry) {
+      final key = entry.key.toLowerCase();
+      if (_excludedPrestasiKeys.contains(key)) return false;
+      final value = entry.value;
+      if (value == null) return false;
+      final str = _stringifyRawValue(value);
+      return str.isNotEmpty;
+    }).toList();
+
+    if (entries.isEmpty) return [];
+
+    return entries.map((entry) {
+      final label = _formatFieldLabel(entry.key);
+      final value = _stringifyRawValue(entry.value);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: _buildPrestasiDetailRow(
+          Icons.info_outline,
+          label,
+          value,
+        ),
+      );
+    }).toList();
+  }
+
+  String _stringifyRawValue(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value.trim();
+    if (value is num || value is bool) return value.toString();
+    if (value is List) {
+      if (value.isEmpty) return '';
+      if (value.length == 2 && value.first is int && value.last is String) {
+        return value.last.toString();
+      }
+      return value.map(_stringifyRawValue).where((e) => e.isNotEmpty).join(', ');
+    }
+    if (value is Map) {
+      return value.entries
+          .map((e) => '${_formatFieldLabel(e.key)}: ${_stringifyRawValue(e.value)}')
+          .where((e) => e.trim().isNotEmpty)
+          .join(', ');
+    }
+    return value.toString();
+  }
+
+  String _formatFieldLabel(String key) {
+    final formatted = key.replaceAll('_', ' ').replaceAll('-', ' ').trim();
+    if (formatted.isEmpty) return key;
+    return formatted.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1);
+    }).join(' ');
+  }
+
+  static const Set<String> _excludedPrestasiKeys = {
+    'id',
+    'prestasi_id',
+    'judul',
+    'name',
+    'prestasi',
+    'deskripsi',
+    'keterangan',
+    'catatan',
+    'tingkat',
+    'level',
+    'jenis',
+    'kategori',
+    'type',
+    'juara',
+    'peringkat',
+    'hasil',
+    'tanggal_pencapaian',
+    'tanggal',
+    'achievement_date',
+    'tgl',
+    'date',
+    'penyelenggara',
+    'organizer',
+    'instansi',
+    'buktifile',
+    'bukti',
+    'attachment',
+    'rawdata',
+  };
 }
 
 // A private model class to hold all student data, including personal and academic.

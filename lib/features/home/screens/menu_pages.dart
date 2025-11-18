@@ -404,11 +404,12 @@ class _BerandaPageState extends State<BerandaPage> {
                     onTap: () {
                       Navigator.of(context, rootNavigator: true).push(
                         MaterialPageRoute(builder: (context) => const PemberitahuanPage()),
-                      );
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ProfileSantriPage()),
-                      );
+                      ).then((_) {
+                        // Setelah kembali dari notifikasi, pastikan kembali ke MenuPages (BerandaPage)
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).popUntil((route) => route.isFirst);
+                        }
+                      });
                     },
                     child: Stack(
                       children: [

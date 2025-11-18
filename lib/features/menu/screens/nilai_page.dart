@@ -342,7 +342,7 @@ class _NilaiPageState extends State<NilaiPage> {
 
   Widget _buildDropdown(String label, String? selectedValue, List<String> items, ValueChanged<String?> onChanged) {
     return DropdownButtonFormField<String>(
-      initialValue: selectedValue,
+      value: selectedValue, 
       items: items.map((String value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
       onChanged: onChanged,
       decoration: InputDecoration(

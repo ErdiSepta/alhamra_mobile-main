@@ -89,21 +89,34 @@ class BillCard extends StatelessWidget {
                   ],
                   const SizedBox(height: 8),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.event, size: 16, color: Colors.grey),
-                          const SizedBox(width: 6),
-                          Text(
-                            _formatDate(bill.dueDate),
-                            style: AppStyles.bodyText(context).copyWith(color: Colors.black54, fontSize: 12),
-                          ),
-                        ],
+                      Expanded(
+                        child: Row(
+                          children: [
+                            const Icon(Icons.event, size: 16, color: Colors.grey),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _formatDate(bill.dueDate),
+                                style: AppStyles.bodyText(context).copyWith(
+                                  color: Colors.black54,
+                                  fontSize: 12,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      Text(
-                        _rupiah(isPayable ? bill.outstanding : bill.amount),
-                        style: AppStyles.saldoValue(context).copyWith(fontSize: 18),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _rupiah(isPayable ? bill.outstanding : bill.amount),
+                          style: AppStyles.saldoValue(context).copyWith(fontSize: 16),
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),

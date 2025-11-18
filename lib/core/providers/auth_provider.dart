@@ -110,6 +110,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   void selectStudent(String studentName) {
+    if (_selectedStudent == studentName) return;
     _selectedStudent = studentName;
     () async {
       try {

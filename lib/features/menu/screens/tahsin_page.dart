@@ -513,7 +513,7 @@ class _TahsinPageState extends State<TahsinPage> {
     }).toList());
 
     return DropdownButtonFormField<TahsinStatus?>(
-      initialValue: selectedValue,
+      value: selectedValue, 
       items: items,
       onChanged: onChanged,
       decoration: InputDecoration(

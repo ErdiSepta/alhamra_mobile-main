@@ -579,7 +579,7 @@ class _TahfidzPageState extends State<TahfidzPage> {
     }).toList());
 
     return DropdownButtonFormField<TahfidzStatus?>(
-      initialValue: selectedValue,
+      value: selectedValue, 
       items: items,
       onChanged: onChanged,
       decoration: InputDecoration(

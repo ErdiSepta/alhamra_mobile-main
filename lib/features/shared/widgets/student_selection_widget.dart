@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/data/student_data.dart';
 import '../../../core/localization/app_localizations.dart';
+import '../../../core/providers/auth_provider.dart';
 import 'search_overlay_widget.dart';
 import 'student_selector_widget.dart';
 
@@ -16,6 +18,7 @@ class StudentSelectionWidget extends StatefulWidget {
   final String? overlayTitle;
   final String? searchHint;
   final Function(bool)? onOverlayVisibilityChanged;
+  final bool syncWithGlobalSelection;
 
   const StudentSelectionWidget({
     super.key,
@@ -28,6 +31,7 @@ class StudentSelectionWidget extends StatefulWidget {
     this.overlayTitle,
     this.searchHint,
     this.onOverlayVisibilityChanged,
+    this.syncWithGlobalSelection = true,
   });
 
   @override
@@ -36,6 +40,7 @@ class StudentSelectionWidget extends StatefulWidget {
 
 class _StudentSelectionWidgetState extends State<StudentSelectionWidget> {
   bool _isOverlayVisible = false;
+  String? _lastSyncedStudent;
 
   void _toggleOverlay() {
     setState(() {
@@ -48,11 +53,32 @@ class _StudentSelectionWidgetState extends State<StudentSelectionWidget> {
     setState(() {
       _isOverlayVisible = false;
     });
+    try {
+      Provider.of<AuthProvider>(context, listen: false).selectStudent(student);
+    } catch (_) {}
     widget.onStudentChanged(student);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.syncWithGlobalSelection) {
+      String? providerStudent;
+      try {
+        providerStudent = context.watch<AuthProvider>().selectedStudent;
+      } catch (_) {
+        providerStudent = null;
+      }
+      if (providerStudent != null && _lastSyncedStudent != providerStudent) {
+        _lastSyncedStudent = providerStudent;
+        if (widget.selectedStudent != providerStudent) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            widget.onStudentChanged(providerStudent!);
+          });
+        }
+      }
+    }
+
     final localizations = AppLocalizations.of(context);
     return StudentSelectorWidget(
       selectedStudent: widget.selectedStudent,
