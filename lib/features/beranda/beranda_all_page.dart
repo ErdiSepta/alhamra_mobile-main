@@ -23,7 +23,9 @@ class BerandaAllPage extends StatefulWidget {
 
 class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late DashboardData _dashboardData;
+  // Remove static dashboard data usage for keuangan
+  String _saldoUangSaku = 'Rp 0';
+  String _saldoWallet = 'Rp 0';
   
   // Santri selection state
   String _selectedSantri = StudentData.defaultStudent;
@@ -40,7 +42,6 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _dashboardData = DashboardData.getSampleData();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadBillsTotal();
       _loadPocketMoneyTotal();
@@ -193,10 +194,14 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
       final totalOut = pocket
           .where((t) => t.type == PocketMoneyTransactionType.outgoing)
           .fold<int>(0, (p, e) => p + e.amount);
-      final balance = totalIn - totalOut;
+      final saldoUangSaku = totalIn - totalOut;
+      final saldoWallet = totalIn - totalOut; // Adjust if wallet logic differs
+      print('[DEBUG] saldoUangSaku (raw): $saldoUangSaku');
+      print('[DEBUG] saldoWallet (raw): $saldoWallet');
       if (!mounted) return;
       setState(() {
-        _amountUangSaku = _formatRupiah(balance < 0 ? 0 : balance);
+        _saldoUangSaku = _formatRupiah(saldoUangSaku < 0 ? 0 : saldoUangSaku);
+        _saldoWallet = _formatRupiah(saldoWallet < 0 ? 0 : saldoWallet);
       });
     } catch (_) {}
   }
@@ -375,11 +380,13 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildKeuanganCards(_dashboardData.keuangan),
+            _buildKeuanganCards(),
             const SizedBox(height: 20),
-            _buildKesantrianCards(_dashboardData.kesantrian),
+            // TODO: Replace with live kesantrian data
+            SizedBox(height: 100, child: Center(child: Text('Kesantrian (live data TODO)'))),
             const SizedBox(height: 20),
-            _buildAkademikCard(_dashboardData.akademik),
+            // TODO: Replace with live akademik data
+            SizedBox(height: 100, child: Center(child: Text('Akademik (live data TODO)'))),
           ],
         ),
       ),
@@ -391,7 +398,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: _buildKeuanganCards(_dashboardData.keuangan),
+        child: _buildKeuanganCards(),
       ),
     );
   }
@@ -401,7 +408,8 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: _buildKesantrianCards(_dashboardData.kesantrian),
+        // TODO: Replace with live kesantrian data
+        child: SizedBox(height: 100, child: Center(child: Text('Kesantrian (live data TODO)'))),
       ),
     );
   }
@@ -411,12 +419,13 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: _buildAkademikCard(_dashboardData.akademik, isFullPage: true),
+        // TODO: Replace with live akademik data
+        child: SizedBox(height: 100, child: Center(child: Text('Akademik (live data TODO)'))),
       ),
     );
   }
 
-  Widget _buildKeuanganCards(KeuanganOverview data) {
+  Widget _buildKeuanganCards() {
     final localizations = AppLocalizations.of(context);
     return Container(
       width: double.infinity,
@@ -510,7 +519,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          _amountUangSaku,
+                          _saldoUangSaku,
                           style: AppStyles.saldoValue(context).copyWith(
                             color: const Color(0xFF2E7D32),
                           ),
@@ -539,7 +548,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          data.saldoDompet,
+                          _saldoWallet,
                           style: AppStyles.saldoValue(context).copyWith(
                             color: const Color(0xFF1976D2),
                           ),
