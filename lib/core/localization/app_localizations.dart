@@ -294,6 +294,20 @@ abstract class AppLocalizations {
   String get jumlahBaris;
   String get ustadPembimbing;
   String get pencatat;
+
+  // Kesantrian Content
+  String get totalIzin;
+  String get totalSetoran;
+  String get setoranSetoran;
+  String get setoranTerakhir;
+  String get perkembanganSetoran;
+  String get mutabaahHarian;
+  String get skorHariIni;
+  String get aktivitasKesehatan;
+  String get perihal;
+  String get terapiKesehatan;
+  String get totalSakitSemesterIni;
+  String get jenisPelanggaran;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

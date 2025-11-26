@@ -498,4 +498,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get ustadPembimbing => 'Supervising Teacher';
   @override
   String get pencatat => 'Recorder';
+
+  // Kesantrian Content
+  @override
+  String get totalIzin => 'Total Permission';
+  @override
+  String get totalSetoran => 'Total Submission';
+  @override
+  String get setoranSetoran => 'Submission';
+  @override
+  String get setoranTerakhir => 'Last Submission';
+  @override
+  String get perkembanganSetoran => 'Submission Progress';
+  @override
+  String get mutabaahHarian => 'Daily Mutabaah';
+  @override
+  String get skorHariIni => 'Today\'s Score';
+  @override
+  String get aktivitasKesehatan => 'Activities & Health';
+  @override
+  String get perihal => 'Issue';
+  @override
+  String get terapiKesehatan => 'Health Therapy';
+  @override
+  String get totalSakitSemesterIni => 'Total Sick Days This Semester';
+  @override
+  String get jenisPelanggaran => 'Type of Violation';
 }

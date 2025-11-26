@@ -299,7 +299,6 @@ class _HistoryFilterWidgetState extends State<HistoryFilterWidget> {
                         widget.onCategoryFiltersChanged!(_tempCategoryFilters);
                       }
                       widget.onApply();
-                      Navigator.pop(context);
                     }
                         : null,
                     style: ElevatedButton.styleFrom(

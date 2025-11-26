@@ -75,15 +75,12 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
     });
     _filterAktivitasEntries();
     _loadChildrenAndInitSelection();
-    _loadPerizinanFromServer();
-    _loadPelanggaranFromServer();
-    _loadKesehatanFromServer();
   }
 
-  Future<void> _loadKesehatanFromServer() async {
+  Future<void> _loadKesehatanFromServer({String? siswaId}) async {
     setState(() => _loadingKesehatan = true);
     try {
-      final items = await _kesehatanService.fetchRiwayat(page: 1, limit: 50);
+      final items = await _kesehatanService.fetchRiwayat(page: 1, limit: 50, siswaId: siswaId);
       final mapped = items.map<AktivitasEntry>((h) => AktivitasEntry(
             id: h.id,
             judul: h.judul.isEmpty ? 'Kesehatan' : h.judul,
@@ -105,7 +102,6 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
       });
     }
   }
-  
 
   @override
   void dispose() {
@@ -122,7 +118,7 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
             (StudentData.allStudents.indexOf(student) + 1).toString())
     };
   }
-  
+
   void _regenerateMockDataWithLocalization() {
     // This method can be called after context is available
     _allAktivitasData = {
@@ -131,7 +127,7 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
             (StudentData.allStudents.indexOf(student) + 1).toString())
     };
   }
-  
+
   StudentAktivitasProfile _createMockProfile(String studentId) {
     final localizations = AppLocalizations.of(context);
     final random = Random(int.parse(studentId));
@@ -199,7 +195,12 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
 
   void _updateSelectedData() {
     setState(() {
-      _selectedProfile = _allAktivitasData[_selectedStudentName]!;
+      final profile = _allAktivitasData[_selectedStudentName];
+      if (profile != null) {
+        _selectedProfile = profile;
+      } else if (_allAktivitasData.isNotEmpty) {
+        _selectedProfile = _allAktivitasData.values.first;
+      }
       // Reset filters and search when student changes
       _searchController.clear();
       _selectedSortOrder = 'Terbaru';
@@ -208,9 +209,6 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
       _endDate = null;
       _filterAktivitasEntries(); // Apply reset filters
     });
-    _loadPerizinanFromServer();
-    _loadPelanggaranFromServer();
-    _loadKesehatanFromServer();
   }
 
   void _filterAktivitasEntries() {
@@ -249,11 +247,10 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
     });
   }
 
-  Future<void> _loadPerizinanFromServer() async {
+  Future<void> _loadPerizinanFromServer({String? siswaId}) async {
     setState(() => _loadingPerizinan = true);
     try {
-      final items = await _perizinanService.fetchRiwayat(page: 1, limit: 50);
-      // Map to AktivitasEntry and merge: replace perizinan entries in selected profile
+      final items = await _perizinanService.fetchRiwayat(page: 1, limit: 50, siswaId: siswaId);
       final mapped = items.map<AktivitasEntry>((p) => AktivitasEntry(
             id: p.id,
             judul: p.keperluan.isEmpty ? p.name : p.keperluan,
@@ -280,10 +277,10 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
     }
   }
 
-  Future<void> _loadPelanggaranFromServer() async {
+  Future<void> _loadPelanggaranFromServer({String? siswaId}) async {
     setState(() => _loadingPelanggaran = true);
     try {
-      final items = await _pelanggaranService.fetchRiwayat(page: 1, limit: 50);
+      final items = await _pelanggaranService.fetchRiwayat(page: 1, limit: 50, siswaId: siswaId);
       final mapped = items.map<AktivitasEntry>((v) => AktivitasEntry(
             id: v.id,
             judul: v.judul.isEmpty ? 'Pelanggaran' : v.judul,
@@ -311,10 +308,45 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
   Widget build(BuildContext context) {
     // Regenerate mock data only when locale changes
     final currentLocale = Localizations.localeOf(context).toString();
+
     if (_lastLocale != currentLocale) {
       _regenerateMockDataWithLocalization();
       _selectedProfile = _allAktivitasData[_selectedStudentName]!;
       _lastLocale = currentLocale;
+    }
+    // Listen to global selected student so changes from other pages keep this page in sync
+    String? providerStudent;
+    try {
+      providerStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      providerStudent = null;
+    }
+    if (providerStudent != null && providerStudent.isNotEmpty && providerStudent != _selectedStudentName) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        setState(() {
+          _selectedStudentName = providerStudent!;
+          _updateSelectedData();
+        });
+        final id = _nameToSiswaId[_selectedStudentName];
+        if (id != null && id.isNotEmpty) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('siswa_id', id);
+          } catch (_) {}
+          await Future.wait([
+            _loadPerizinanFromServer(siswaId: id),
+            _loadPelanggaranFromServer(siswaId: id),
+            _loadKesehatanFromServer(siswaId: id),
+          ]);
+        } else {
+          await Future.wait([
+            _loadPerizinanFromServer(),
+            _loadPelanggaranFromServer(),
+            _loadKesehatanFromServer(),
+          ]);
+        }
+      });
     }
     return Scaffold(
       body: Stack(
@@ -361,12 +393,26 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
                     final prefs = await SharedPreferences.getInstance();
                     await prefs.setString('siswa_id', id);
                   } catch (_) {}
+                  try {
+                    // ignore: use_build_context_synchronously
+                    context.read<AuthProvider>().selectStudent(nama);
+                  } catch (_) {}
+                  await Future.wait([
+                    _loadPerizinanFromServer(siswaId: id),
+                    _loadPelanggaranFromServer(siswaId: id),
+                    _loadKesehatanFromServer(siswaId: id),
+                  ]);
+                  return;
                 }
                 try {
                   // ignore: use_build_context_synchronously
                   context.read<AuthProvider>().selectStudent(nama);
                 } catch (_) {}
-                await _loadPerizinanFromServer();
+                await Future.wait([
+                  _loadPerizinanFromServer(),
+                  _loadPelanggaranFromServer(),
+                  _loadKesehatanFromServer(),
+                ]);
               },
               onClose: () => setState(() => _isStudentOverlayVisible = false),
               searchHint: AppLocalizations.of(context).cariSantri,
@@ -396,15 +442,25 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
       setState(() {
         _allStudents = names.isEmpty ? StudentData.allStudents : names;
       });
-      // Ambil selected dari provider atau fallback pertama
+      // Ambil selected dari SharedPreferences bila ada, kemudian AuthProvider,
+      // baru fallback ke nama pertama dari daftar anak
+      String selected = '';
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        selected = prefs.getString('selected_student_name') ?? '';
+      } catch (_) {}
+
       final provider = context.read<AuthProvider>();
-      var selected = provider.selectedStudent;
+      if (selected.isEmpty) {
+        selected = provider.selectedStudent;
+      }
       if (selected.isEmpty || !_nameToSiswaId.containsKey(selected)) {
         if (names.isNotEmpty) {
           selected = names.first;
           provider.selectStudent(selected);
         }
       }
+
       if (selected.isNotEmpty && _nameToSiswaId.containsKey(selected)) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('siswa_id', _nameToSiswaId[selected]!);
@@ -416,7 +472,12 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
               : (selected.isEmpty ? _selectedStudentName : selected);
         });
       }
-      await _loadPerizinanFromServer();
+      final selectedId = _nameToSiswaId[_selectedStudentName];
+      await Future.wait([
+        _loadPerizinanFromServer(siswaId: selectedId),
+        _loadPelanggaranFromServer(siswaId: selectedId),
+        _loadKesehatanFromServer(siswaId: selectedId),
+      ]);
     } catch (_) {}
   }
 
@@ -456,12 +517,26 @@ class _AktivitasPageState extends State<AktivitasPage> with TickerProviderStateM
               final prefs = await SharedPreferences.getInstance();
               await prefs.setString('siswa_id', id);
             } catch (_) {}
+            try {
+              // ignore: use_build_context_synchronously
+              context.read<AuthProvider>().selectStudent(nama);
+            } catch (_) {}
+            await Future.wait([
+              _loadPerizinanFromServer(siswaId: id),
+              _loadPelanggaranFromServer(siswaId: id),
+              _loadKesehatanFromServer(siswaId: id),
+            ]);
+            return;
           }
           try {
             // ignore: use_build_context_synchronously
             context.read<AuthProvider>().selectStudent(nama);
           } catch (_) {}
-          await _loadPerizinanFromServer();
+          await Future.wait([
+            _loadPerizinanFromServer(),
+            _loadPelanggaranFromServer(),
+            _loadKesehatanFromServer(),
+          ]);
         },
         onOverlayVisibilityChanged: (visible) => setState(() => _isStudentOverlayVisible = visible),
         avatarUrl: StudentData.getStudentAvatar(_selectedStudentName),

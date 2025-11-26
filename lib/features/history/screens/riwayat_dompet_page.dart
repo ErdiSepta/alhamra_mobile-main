@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/utils/app_styles.dart';
 import '../../../core/models/wallet_history.dart';
+import '../../../core/models/pocket_money_history.dart';
+import '../../../core/data/pocket_money_service.dart';
+import '../../../core/data/canteen_service.dart';
 import '../../shared/widgets/index.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
+import '../../../core/providers/auth_provider.dart';
 import 'detail_dompet_page.dart';
 
 class RiwayatDompetPage extends StatefulWidget {
@@ -30,6 +35,13 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
     'Pembayaran': true,
     'Transfer': true,
   };
+
+  final PocketMoneyService _pocketMoneyService = PocketMoneyService();
+  final CanteenService _canteenService = CanteenService();
+  bool _loading = false;
+  String? _errorMessage;
+  List<WalletHistory> _apiTransactions = [];
+  String? _lastSelectedStudent;
 
   // Dummy data untuk riwayat dompet
   final List<WalletHistory> _allTransactions = [
@@ -111,6 +123,9 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchTransactions();
+    });
   }
 
   @override
@@ -122,6 +137,19 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
 
   @override
   Widget build(BuildContext context) {
+    // Auto refetch when selected student changes globally
+    String? selectedStudent;
+    try {
+      selectedStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      selectedStudent = null;
+    }
+    if (selectedStudent != null && selectedStudent.isNotEmpty && _lastSelectedStudent != selectedStudent) {
+      _lastSelectedStudent = selectedStudent;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _fetchTransactions();
+      });
+    }
     final baseTheme = Theme.of(context);
     final themed = baseTheme.copyWith(
       textTheme: baseTheme.textTheme.apply(fontFamily: 'Poppins'),
@@ -250,6 +278,26 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
   }
 
   Widget _buildTransactionList(List<WalletHistory> transactions) {
+    if (_loading) {
+      return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
+    }
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 48, color: Colors.grey[400]),
+              const SizedBox(height: 12),
+              Text(_errorMessage!, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey[700])),
+              const SizedBox(height: 12),
+              ElevatedButton(onPressed: _fetchTransactions, child: const Text('Coba Lagi')),
+            ],
+          ),
+        ),
+      );
+    }
     if (transactions.isEmpty) {
       return Center(
         child: Column(
@@ -269,6 +317,21 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
                 fontWeight: FontWeight.w500,
                 color: Colors.grey[600],
               ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Tidak ada transaksi yang dapat ditampilkan.',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: Colors.grey[500],
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _fetchTransactions,
+              child: const Text('Muat Ulang'),
             ),
           ],
         ),
@@ -459,14 +522,20 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Rp. 3.750.000',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    color: AppStyles.primaryColor,
-                  ),
+                Builder(
+                  builder: (context) {
+                    final totals = _computeTotals();
+                    final prefix = totals.selisih >= 0 ? 'Rp ' : '-Rp ';
+                    return Text(
+                      _formatRupiah(totals.selisihAbs, prefix: prefix),
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 24,
+                        fontWeight: FontWeight.w600,
+                        color: AppStyles.primaryColor,
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 20),
                 Row(
@@ -498,14 +567,19 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            '+Rp.4.800.000',
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppStyles.primaryColor,
-                            ),
+                          Builder(
+                            builder: (context) {
+                              final totals = _computeTotals();
+                              return Text(
+                                '+${_formatRupiah(totals.totalIn)}',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppStyles.primaryColor,
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -537,14 +611,19 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            '-Rp.850.000',
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.pink[300],
-                            ),
+                          Builder(
+                            builder: (context) {
+                              final totals = _computeTotals();
+                              return Text(
+                                '-${_formatRupiah(totals.totalOut)}',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.pink[300],
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -579,14 +658,20 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
                   widget: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        '18%',
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 24,
-                          fontWeight: FontWeight.w600,
-                          color: AppStyles.primaryColor,
-                        ),
+                      Builder(
+                        builder: (context) {
+                          final totals = _computeTotals();
+                          final pct = totals.percentOut;
+                          return Text(
+                            '${pct.toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 24,
+                              fontWeight: FontWeight.w600,
+                              color: AppStyles.primaryColor,
+                            ),
+                          );
+                        },
                       ),
                       Text(
                         'Pengeluaran',
@@ -603,7 +688,7 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           
           // Category Sections
           Row(
@@ -695,10 +780,10 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
             },
             child: Column(
               key: ValueKey(_selectedCategory),
-              children: (_selectedCategory == 'Pemasukan' 
-                  ? _allTransactions.where((t) => t.isPositive).take(2)
-                  : _allTransactions.where((t) => !t.isPositive).take(2)
-              ).map((transaction) {
+              children: (_selectedCategory == 'Pemasukan'
+                      ? _reportFiltered(incoming: true).take(2)
+                      : _reportFiltered(incoming: false).take(2))
+                  .map((transaction) {
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   child: _buildTransactionItem(transaction),
@@ -793,7 +878,8 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
   }
 
   List<WalletHistory> _getFilteredTransactions() {
-    List<WalletHistory> filtered = List.from(_allTransactions);
+    final source = _apiTransactions.isNotEmpty ? _apiTransactions : _allTransactions;
+    List<WalletHistory> filtered = List.from(source);
     
     // Filter by date range
     if (_startDate != null || _endDate != null) {
@@ -819,11 +905,22 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
       return _categoryFilters[category] == true;
     }).toList();
     
-    // Sort by date
+    // Sort by selected order
     if (_selectedSortOrder == 'Terbaru') {
+      // Newest date first
       filtered.sort((a, b) => b.date.compareTo(a.date));
-    } else {
+    } else if (_selectedSortOrder == 'Terlama') {
+      // Oldest date first
       filtered.sort((a, b) => a.date.compareTo(b.date));
+    } else if (_selectedSortOrder == 'Nominal Tertinggi') {
+      // Highest amount first
+      filtered.sort((a, b) => b.amount.compareTo(a.amount));
+    } else if (_selectedSortOrder == 'Nominal Terendah') {
+      // Lowest amount first
+      filtered.sort((a, b) => a.amount.compareTo(b.amount));
+    } else {
+      // Fallback: newest first
+      filtered.sort((a, b) => b.date.compareTo(a.date));
     }
     
     return filtered;
@@ -843,10 +940,141 @@ class _RiwayatDompetPageState extends State<RiwayatDompetPage> with SingleTicker
   }
 
   List<ChartData> _getChartData() {
+    final totals = _computeTotals();
+    final total = (totals.totalIn + totals.totalOut).toDouble();
+    final inPct = total == 0 ? 0.0 : (totals.totalIn / total) * 100.0;
+    final outPct = total == 0 ? 0.0 : (totals.totalOut / total) * 100.0;
     return [
-      ChartData('Pemasukan', 82, AppStyles.primaryColor),
-      ChartData('Pengeluaran', 18, Colors.pink[300]!),
+      ChartData('Pemasukan', inPct, AppStyles.primaryColor),
+      ChartData('Pengeluaran', outPct, Colors.pink[300]!),
     ];
+  }
+
+  String _formatRupiah(int value, {String prefix = 'Rp '}) {
+    final s = value.toString();
+    final reg = RegExp(r'\B(?=(\d{3})+(?!\d))');
+    return '$prefix${s.replaceAllMapped(reg, (m) => '.')}';
+  }
+
+  ({DateTime start, DateTime end}) _reportRange() {
+    final now = DateTime.now();
+    // Jika user sudah mengatur rentang tanggal melalui filter utama,
+    // gunakan rentang itu juga untuk Laporan.
+    if (_startDate != null && _endDate != null) {
+      final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+      final end = DateTime(_endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
+      return (start: start, end: end);
+    }
+    if (_selectedPeriod == 'Bulan Ini') {
+      final start = DateTime(now.year, now.month, 1);
+      final end = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      return (start: start, end: end);
+    } else if (_selectedPeriod == 'Bulan Lalu') {
+      final prev = DateTime(now.year, now.month - 1, 1);
+      final start = DateTime(prev.year, prev.month, 1);
+      final end = DateTime(prev.year, prev.month + 1, 0, 23, 59, 59);
+      return (start: start, end: end);
+    } else {
+      // 3 bulan terakhir termasuk bulan ini
+      final threeAgo = DateTime(now.year, now.month - 2, 1);
+      final start = DateTime(threeAgo.year, threeAgo.month, 1);
+      final end = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      return (start: start, end: end);
+    }
+  }
+
+  List<WalletHistory> _reportFiltered({required bool incoming}) {
+    final source = _apiTransactions.isNotEmpty ? _apiTransactions : _allTransactions;
+    final range = _reportRange();
+    final list = source.where((t) {
+      final typeOk = incoming ? t.isPositive : !t.isPositive;
+      final inRange = !t.date.isBefore(range.start) && !t.date.isAfter(range.end);
+      if (!(typeOk && inRange)) return false;
+
+      // Terapkan juga filter kategori seperti di _getFilteredTransactions
+      final category = _getTransactionCategory(t);
+      if (_categoryFilters[category] != true) return false;
+
+      return true;
+    }).toList();
+
+    // Urutkan sesuai _selectedSortOrder
+    if (_selectedSortOrder == 'Terbaru') {
+      list.sort((a, b) => b.date.compareTo(a.date));
+    } else if (_selectedSortOrder == 'Terlama') {
+      list.sort((a, b) => a.date.compareTo(b.date));
+    } else if (_selectedSortOrder == 'Nominal Tertinggi') {
+      list.sort((a, b) => b.amount.compareTo(a.amount));
+    } else if (_selectedSortOrder == 'Nominal Terendah') {
+      list.sort((a, b) => a.amount.compareTo(b.amount));
+    } else {
+      list.sort((a, b) => b.date.compareTo(a.date));
+    }
+    return list;
+  }
+
+  _Totals _computeTotals() {
+    final incoming = _reportFiltered(incoming: true);
+    final outgoing = _reportFiltered(incoming: false);
+    final totalIn = incoming.fold<int>(0, (p, e) => p + e.amount);
+    final totalOut = outgoing.fold<int>(0, (p, e) => p + e.amount);
+    return _Totals(totalIn: totalIn, totalOut: totalOut);
+  }
+
+  Future<void> _fetchTransactions() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    try {
+      // 1) Ambil transaksi kantin sebagai pengeluaran dompet
+      final canteen = await _canteenService.fetchCanteenTransactions(page: 1, limit: 100);
+      final mappedCanteen = canteen.map<WalletHistory>((t) {
+        return WalletHistory(
+          id: t.id,
+          title: 'Pembelian Kantin',
+          subtitle: t.subtitle,
+          amount: t.amount,
+          date: t.date,
+          type: WalletTransactionType.payment,
+          description: t.description,
+          bankName: 'Kantin',
+        );
+      }).toList();
+
+      // 2) Ambil transaksi uang saku, pilih yang berkaitan dengan Wallet Recharge
+      final pocket = await _pocketMoneyService.fetchTransactions(page: 1, limit: 100);
+      final recharge = pocket.where((t) {
+        final desc = (t.description ?? t.subtitle).toLowerCase();
+        return desc.contains('wallet recharge');
+      }).map<WalletHistory>((t) {
+        return WalletHistory(
+          id: 'WR-${t.id}',
+          title: 'Wallet Recharge',
+          subtitle: t.subtitle,
+          amount: t.amount,
+          date: t.date,
+          type: WalletTransactionType.topup,
+          description: t.description,
+          bankName: 'Uang Saku',
+        );
+      }).toList();
+
+      // Gunakan hanya data nyata (kantin + wallet recharge) untuk API list.
+      // _allTransactions hanya dipakai sebagai fallback saat API belum tersedia.
+      final merged = <WalletHistory>[...mappedCanteen, ...recharge]
+        ..sort((a, b) => b.date.compareTo(a.date));
+
+      setState(() {
+        _apiTransactions = merged;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _errorMessage = e.toString();
+      });
+    }
   }
 }
 
@@ -855,4 +1083,16 @@ class ChartData {
   final String category;
   final double value;
   final Color color;
+}
+
+class _Totals {
+  _Totals({required this.totalIn, required this.totalOut})
+      : selisih = totalIn - totalOut,
+        selisihAbs = (totalIn - totalOut).abs(),
+        percentOut = (totalIn + totalOut) == 0 ? 0 : (totalOut / (totalIn + totalOut)) * 100;
+  final int totalIn;
+  final int totalOut;
+  final int selisih;
+  final int selisihAbs;
+  final double percentOut;
 }

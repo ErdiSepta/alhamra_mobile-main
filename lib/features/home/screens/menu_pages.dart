@@ -16,6 +16,7 @@ import '../../../core/services/news_service.dart';
 import '../../../core/data/payment_service.dart';
 import '../../../core/services/odoo_api_service.dart';
 import '../../../core/data/pocket_money_service.dart';
+import '../../../core/data/canteen_service.dart';
 import '../../../core/models/pocket_money_history.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/models/article_model.dart';
@@ -56,7 +57,7 @@ class _BerandaPageState extends State<BerandaPage> {
   // Saldo amounts
   String _amountTagihan = 'Rp 0';
   String _amountUangSaku = 'Rp 0';
-  final String _amountDompet = 'Rp 2.345.000';
+  String _amountDompet = 'Rp 0';
 
   // Saldo visibility and refresh
   bool _saldoHidden = false;
@@ -97,6 +98,7 @@ class _BerandaPageState extends State<BerandaPage> {
     _loadChildrenAndInitSelection();
     _loadBillsTotal();
     _loadPocketMoneyTotal();
+    _loadWalletTotal();
   }
 
   Future<void> _loadChildrenAndInitSelection() async {
@@ -206,6 +208,32 @@ class _BerandaPageState extends State<BerandaPage> {
     } catch (_) {}
   }
 
+  Future<void> _loadWalletTotal() async {
+    try {
+      final pocketService = PocketMoneyService();
+      final pocket = await pocketService.fetchTransactions(page: 1, limit: 1000);
+
+      // Wallet Recharge: pengeluaran dari uang saku yang masuk ke dompet
+      final walletRecharge = pocket.where((t) {
+        if (t.type != PocketMoneyTransactionType.outgoing) return false;
+        final sub = t.subtitle.toLowerCase();
+        return sub.contains('wallet recharge');
+      });
+      final totalIn = walletRecharge.fold<int>(0, (p, e) => p + e.amount);
+
+      // Pengeluaran dompet di kantin
+      final canteenService = CanteenService();
+      final canteen = await canteenService.fetchCanteenTransactions(page: 1, limit: 1000);
+      final totalOut = canteen.fold<int>(0, (p, e) => p + e.amount);
+
+      final balance = totalIn - totalOut;
+      if (!mounted) return;
+      setState(() {
+        _amountDompet = _formatRupiah(balance < 0 ? 0 : balance);
+      });
+    } catch (_) {}
+  }
+
   Future<void> _loadNews() async {
     setState(() {
       _isLoadingNews = true;
@@ -269,6 +297,8 @@ class _BerandaPageState extends State<BerandaPage> {
         _loadNews(),
         _loadFacilities(),
         _loadBillsTotal(),
+        _loadPocketMoneyTotal(),
+        _loadWalletTotal(),
       ]);
     } catch (e) {
       print('Error refreshing data: $e');
@@ -338,10 +368,31 @@ class _BerandaPageState extends State<BerandaPage> {
     });
     _loadBillsTotal();
     _loadPocketMoneyTotal();
+    _loadWalletTotal();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Sync selected student with global provider so changes from other pages (e.g. Aktivitas)
+    // are reflected here, and reload financial data when student changes.
+    String? providerStudent;
+    try {
+      providerStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      providerStudent = null;
+    }
+    if (providerStudent != null && providerStudent.isNotEmpty && providerStudent != _selectedSantri) {
+      _selectedSantri = providerStudent;
+      final siswaId = _nameToSiswaId[_selectedSantri];
+      if (siswaId != null && siswaId.isNotEmpty) {
+        SharedPreferences.getInstance().then((prefs) {
+          prefs.setString('siswa_id', siswaId);
+        });
+      }
+      _loadBillsTotal();
+      _loadPocketMoneyTotal();
+      _loadWalletTotal();
+    }
     final baseTheme = Theme.of(context);
     final themed = baseTheme.copyWith(
       textTheme: baseTheme.textTheme.apply(fontFamily: 'Poppins'),

@@ -23,13 +23,16 @@ class _AbsensiPageState extends State<AbsensiPage> {
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  AttendanceDetail? _selectedAttendanceDetail;
 
   @override
   void initState() {
     super.initState();
     _generateMockData();
     _updateSelectedData();
-    _selectedDay = _focusedDay;
+    _selectedDay = DateTime.utc(_focusedDay.year, _focusedDay.month, _focusedDay.day);
+    _selectedAttendanceDetail =
+        _selectedAttendance.dailyStatus[_selectedDay!];
   }
 
   void _generateMockData() {
@@ -42,6 +45,10 @@ class _AbsensiPageState extends State<AbsensiPage> {
 
   void _updateSelectedData() {
     _selectedAttendance = _allAttendanceData[_selectedStudentName]!;
+    if (_selectedDay != null) {
+      _selectedAttendanceDetail =
+          _selectedAttendance.dailyStatus[_selectedDay!];
+    }
   }
 
   // --- UI Builders ---
@@ -124,6 +131,8 @@ class _AbsensiPageState extends State<AbsensiPage> {
           _buildStatisticsCard(),
           const SizedBox(height: 24),
           _buildCalendarCard(),
+          const SizedBox(height: 16),
+          _buildSelectedDayDetailCard(),
         ],
       ),
     );
@@ -232,19 +241,11 @@ class _AbsensiPageState extends State<AbsensiPage> {
         },
         onDaySelected: (selectedDay, focusedDay) {
           setState(() {
-            _selectedDay = selectedDay;
+            _selectedDay = DateTime.utc(selectedDay.year, selectedDay.month, selectedDay.day);
             _focusedDay = focusedDay; // update `_focusedDay` here as well
+            _selectedAttendanceDetail =
+                _selectedAttendance.dailyStatus[_selectedDay!];
           });
-
-          final attendanceDetail = _selectedAttendance.dailyStatus[selectedDay];
-          if (attendanceDetail != null &&
-              (attendanceDetail.status == AttendanceStatus.izin ||
-                  attendanceDetail.status == AttendanceStatus.alpa)) {
-            if (attendanceDetail.reason != null &&
-                attendanceDetail.reason!.isNotEmpty) {
-              _showAttendanceReasonDialog(attendanceDetail);
-            }
-          }
         },
         onPageChanged: (focusedDay) {
           _focusedDay = focusedDay;
@@ -286,33 +287,89 @@ class _AbsensiPageState extends State<AbsensiPage> {
     );
   }
 
-  void _showAttendanceReasonDialog(AttendanceDetail detail) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(
-              detail.status == AttendanceStatus.izin
-                  ? Icons.info_outline
-                  : Icons.warning_amber_outlined,
-              color: detail.status == AttendanceStatus.izin
-                  ? Colors.orange
-                  : Colors.red,
-            ),
-            const SizedBox(width: 8),
-            Text(detail.status == AttendanceStatus.izin
-                ? AppLocalizations.of(context).alasanIzin
-                : AppLocalizations.of(context).keteranganAlpa),
-          ],
-        ),
-        content: Text(detail.reason ?? AppLocalizations.of(context).tidakAdaData),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
+  Widget _buildSelectedDayDetailCard() {
+    if (_selectedDay == null) {
+      return const SizedBox.shrink();
+    }
+
+    final detail = _selectedAttendanceDetail;
+    final localizations = AppLocalizations.of(context);
+
+    String statusText;
+    Color statusColor;
+
+    if (detail == null) {
+      statusText = localizations.tidakAdaData;
+      statusColor = Colors.grey;
+    } else {
+      switch (detail.status) {
+        case AttendanceStatus.hadir:
+          statusText = 'Hadir';
+          statusColor = Colors.green;
+          break;
+        case AttendanceStatus.izin:
+          statusText = 'Izin';
+          statusColor = Colors.orange;
+          break;
+        case AttendanceStatus.alpa:
+          statusText = 'Alpa';
+          statusColor = Colors.red;
+          break;
+        case AttendanceStatus.libur:
+          statusText = 'Libur';
+          statusColor = Colors.blue;
+          break;
+      }
+    }
+
+    return CustomCardWidget(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_selectedDay!.day.toString().padLeft(2, '0')}-${_selectedDay!.month.toString().padLeft(2, '0')}-${_selectedDay!.year}',
+            style: AppStyles.sectionTitle(context),
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  statusText,
+                  style: AppStyles.bodyText(context).copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (detail != null &&
+              detail.reason != null &&
+              detail.reason!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              detail.status == AttendanceStatus.izin
+                  ? localizations.alasanIzin
+                  : detail.status == AttendanceStatus.alpa
+                      ? localizations.keteranganAlpa
+                      : localizations.tidakAdaData,
+              style: AppStyles.bodyText(context).copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              detail.reason!,
+              style: AppStyles.bodyText(context),
+            ),
+          ],
         ],
       ),
     );

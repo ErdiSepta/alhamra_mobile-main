@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 import '../../../core/utils/app_styles.dart';
 import '../../../core/models/bill.dart';
 import '../../../core/localization/app_localizations.dart';
@@ -8,6 +9,7 @@ import '../../../core/data/payment_service.dart';
 import '../../../core/services/odoo_api_service.dart';
 import 'detail_tagihan_page.dart';
 import '../../shared/widgets/history_filter_widget.dart';
+import '../../../core/providers/auth_provider.dart';
 
 class RiwayatTagihanPage extends StatefulWidget {
   const RiwayatTagihanPage({super.key});
@@ -35,6 +37,7 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
   List<Bill> _allBills = [];
   bool _isLoading = true;
   String? _error;
+  String? _lastSelectedStudent;
 
   @override
   void initState() {
@@ -43,12 +46,15 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
   }
 
   String _getBillCategory(Bill bill) {
-    final t = bill.title.toLowerCase();
-    if (t.contains('spp')) return 'SPP';
-    if (t.contains('seragam')) return 'Seragam';
-    if (t.contains('makan')) return 'Makan';
-    if (t.contains('buku')) return 'Buku';
-    if (t.contains('kegiatan') || t.contains('ekstrakurikuler')) return 'Kegiatan';
+    // Gabungkan title dan subtitle agar kategori mengikuti teks yang
+    // benar-benar terlihat di kartu riwayat.
+    final text = '${bill.title} ${bill.subtitle ?? ''}'.toLowerCase();
+
+    if (text.contains('spp')) return 'SPP';
+    if (text.contains('seragam')) return 'Seragam';
+    if (text.contains('makan')) return 'Makan';
+    if (text.contains('buku')) return 'Buku';
+    if (text.contains('kegiatan') || text.contains('ekstrakurikuler')) return 'Kegiatan';
     return 'Lainnya';
   }
 
@@ -147,6 +153,8 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
               ..clear()
               ..addAll(tempCategoryFilters);
           });
+          // Tutup bottom sheet setelah filter diterapkan
+          Navigator.pop(context);
         },
         onReset: () {
           setState(() {
@@ -194,11 +202,26 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
       return _categoryFilters[cat] == true;
     }).toList();
     
-    // Sort by newest first
-    if (_selectedSortOrder == 'Terbaru') {
-      filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
-    } else {
-      filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    // Sort by selected order
+    switch (_selectedSortOrder) {
+      case 'Terbaru':
+        // Newest due date first
+        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
+        break;
+      case 'Terlama':
+        // Oldest due date first
+        filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+        break;
+      case 'Nominal Tertinggi':
+        // Highest invoice amount first
+        filtered.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case 'Nominal Terendah':
+        // Lowest invoice amount first
+        filtered.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      default:
+        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
     }
     
     return filtered;
@@ -206,6 +229,19 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Auto refetch when selected student changes
+    String? selectedStudent;
+    try {
+      selectedStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      selectedStudent = null;
+    }
+    if (selectedStudent != null && selectedStudent.isNotEmpty && _lastSelectedStudent != selectedStudent) {
+      _lastSelectedStudent = selectedStudent;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadPaidBills();
+      });
+    }
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -303,14 +339,48 @@ class _RiwayatTagihanPageState extends State<RiwayatTagihanPage> {
                               ),
                             ],
                           )
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(16),
-                            itemCount: _filteredBills.length,
-                            itemBuilder: (context, index) {
-                              final bill = _filteredBills[index];
-                              return _buildTransactionItem(bill);
-                            },
-                          ),
+                          : (_filteredBills.isEmpty
+                              ? ListView(
+                                  padding: const EdgeInsets.all(16),
+                                  children: [
+                                    Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        const SizedBox(height: 80),
+                                        Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey[400]),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Belum ada riwayat tagihan',
+                                          style: const TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                          ).copyWith(color: Colors.grey[700]),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Tagihan yang sudah dibayar akan muncul di sini.',
+                                          style: const TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w400,
+                                          ).copyWith(color: Colors.grey[500]),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.all(16),
+                                  itemCount: _filteredBills.length,
+                                  itemBuilder: (context, index) {
+                                    final bill = _filteredBills[index];
+                                    return _buildTransactionItem(bill);
+                                  },
+                                )),
                   ),
           ),
         ],

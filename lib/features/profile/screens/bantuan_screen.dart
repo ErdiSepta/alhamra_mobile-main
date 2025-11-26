@@ -57,7 +57,7 @@ class BantuanScreen extends StatelessWidget {
           // FAQ List
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16), 
               children: [
           _buildFAQItem(
             context,
@@ -67,7 +67,7 @@ class BantuanScreen extends StatelessWidget {
           _buildFAQItem(
             context,
             'Saya lupa password akun saya, bagaimana cara mengatasinya?',
-            'Jika Anda lupa password, silakan hubungi admin sekolah atau gunakan fitur "Lupa Password" di halaman login. Admin akan membantu mereset password Anda.',
+            'Jika Anda lupa password, silakan hubungi admin sekolah. Admin akan membantu mereset password Anda.',
           ),
           _buildFAQItem(
             context,

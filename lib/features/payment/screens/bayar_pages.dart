@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+
 import '../../../core/utils/app_styles.dart';
 import '../../../core/data/student_data.dart';
 import '../../../core/models/bill.dart';
 import '../../../core/localization/app_localizations.dart';
+import '../../../core/data/payment_service.dart';
+import '../../../core/data/auth_service.dart';
+import '../../../core/services/odoo_api_service.dart';
+import '../../../core/providers/auth_provider.dart';
 import '../../shared/widgets/index.dart';
 import '../../shared/widgets/student_selection_widget.dart';
 import 'custom_status_menunggu_page.dart';
@@ -22,8 +29,11 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
   late TabController _tabController;
   final ScrollController _listController = ScrollController();
   String _selectedStudent = StudentData.defaultStudent;
-  final List<String> _students = StudentData.allStudents;
+  List<String> _students = StudentData.allStudents;
+  final Map<String, String> _nameToSiswaId = {};
   bool _isStudentOverlayVisible = false;
+  bool _isLoadingStudents = false;
+  String? _currentSiswaId;
   
   // Filter state variables
   String _selectedSortOrder = 'Terbaru';
@@ -33,64 +43,17 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
   // Payment type filters
   final Map<String, bool> _paymentTypeFilters = {
     'SPP': true,
-    'Uang Tahunan': true,
     'Seragam': true,
-    'Uang Pembangunan': true,
-    'Uang Sumbangan': true,
+    'Makan': true,
+    'Buku': true,
+    'Kegiatan': true,
+    'Lainnya': true,
   };
 
-  // Sample payment data
-  final List<PaymentItem> _allPayments = [
-    PaymentItem(
-      id: 'INV/083/329382',
-      type: 'Uang Tahunan',
-      studentName: 'Naufal Ramadhan',
-      amount: 2500000,
-      dueDate: DateTime(2026, 1, 30),
-      status: PaymentStatus.lunas,
-    ),
-    PaymentItem(
-      id: 'INV/083/329383',
-      type: 'SPP Santri',
-      studentName: 'Naufal Ramadhan',
-      amount: 2500000,
-      dueDate: DateTime(2026, 1, 30),
-      status: PaymentStatus.belumLunas,
-    ),
-    PaymentItem(
-      id: 'INV/083/329384',
-      type: 'SPP Santri',
-      studentName: 'Naufal Ramadhan',
-      amount: 2500000,
-      dueDate: DateTime(2026, 1, 30),
-      status: PaymentStatus.sebagian,
-    ),
-    PaymentItem(
-      id: 'INV/083/329385',
-      type: 'Uang Tahunan',
-      studentName: 'Naufal Ramadhan',
-      amount: 2500000,
-      dueDate: DateTime(2026, 1, 30),
-      status: PaymentStatus.lunas,
-    ),
-    // Payments for second student to demonstrate switching
-    PaymentItem(
-      id: 'INV/083/329386',
-      type: 'Seragam',
-      studentName: 'Aisyah Zahra',
-      amount: 420000,
-      dueDate: DateTime(2026, 2, 15),
-      status: PaymentStatus.belumLunas,
-    ),
-    PaymentItem(
-      id: 'INV/083/329387',
-      type: 'SPP Santri',
-      studentName: 'Aisyah Zahra',
-      amount: 350000,
-      dueDate: DateTime(2026, 2, 10),
-      status: PaymentStatus.sebagian,
-    ),
-  ];
+  // Payment data loaded from API
+  final PaymentService _paymentService = PaymentService();
+  List<PaymentItem> _allPayments = [];
+  bool _isLoadingPayments = false;
 
   @override
   void initState() {
@@ -101,12 +64,206 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
         _scrollListToTop();
       }
     });
+    _initStudentsFromServer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadPaymentsFromServer();
+    });
   }
 
-  void _onStudentChanged(String student) {
+  Future<void> _onStudentChanged(String student) async {
     setState(() {
       _selectedStudent = student;
     });
+
+    // Persist siswa_id berdasarkan nama santri yang dipilih
+    final id = _nameToSiswaId[student];
+    if (id != null && id.isNotEmpty) {
+      _currentSiswaId = id;
+      // ignore: avoid_print
+      print('[StatusPage] Student changed to "$student" with siswaId=$id');
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('siswa_id', id);
+      } catch (_) {}
+    }
+
+    // Update provider agar halaman lain juga ikut berubah
+    try {
+      context.read<AuthProvider>().selectStudent(student);
+    } catch (_) {}
+
+    // Reload data pembayaran untuk santri terpilih
+    // ignore: avoid_print
+    print('[StatusPage] Reloading payments after student change');
+    await _loadPaymentsFromServer();
+  }
+
+  Future<void> _initStudentsFromServer() async {
+    setState(() {
+      _isLoadingStudents = true;
+    });
+    try {
+      final odoo = OdooApiService();
+      await odoo.loadSession();
+      final children = await odoo.getChildren();
+
+      final names = <String>[];
+      _nameToSiswaId.clear();
+      for (final c in children) {
+        final name = (c['name'] ?? c['nama'] ?? '').toString();
+        final id = c['id']?.toString() ?? '';
+        if (name.isNotEmpty && id.isNotEmpty) {
+          names.add(name);
+          _nameToSiswaId[name] = id;
+        }
+      }
+
+      if (!mounted) return;
+
+      // Tentukan selected berdasarkan nama terakhir di SharedPreferences,
+      // bila tidak ada gunakan AuthProvider, lalu fallback ke yang pertama
+      String selected = '';
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        selected = prefs.getString('selected_student_name') ?? '';
+      } catch (_) {}
+
+      final provider = context.read<AuthProvider>();
+      if (selected.isEmpty) {
+        selected = provider.selectedStudent;
+      }
+      if ((selected.isEmpty || !_nameToSiswaId.containsKey(selected)) && names.isNotEmpty) {
+        selected = names.first;
+        provider.selectStudent(selected);
+      }
+
+      // Simpan siswa_id terpilih ke SharedPreferences
+      if (selected.isNotEmpty && _nameToSiswaId.containsKey(selected)) {
+        final prefs = await SharedPreferences.getInstance();
+        final siswaId = _nameToSiswaId[selected]!;
+        _currentSiswaId = siswaId;
+        await prefs.setString('siswa_id', siswaId);
+      }
+
+      setState(() {
+        _students = names.isNotEmpty ? names : _students;
+        if (selected.isNotEmpty) {
+          _selectedStudent = selected;
+        }
+      });
+    } catch (_) {
+      // Jika gagal, biarkan fallback ke StudentData default
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingStudents = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadPaymentsFromServer() async {
+    setState(() {
+      _isLoadingPayments = true;
+    });
+    try {
+      var sessionId = await AuthService.getSessionId();
+      var siswaId = _currentSiswaId ?? await AuthService.getSiswaId();
+
+      // Fallback: baca session dari prefs / OdooApiService jika perlu
+      if (sessionId == null || sessionId.isEmpty) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          sessionId = prefs.getString('odoo_session_id');
+        } catch (_) {}
+      }
+
+      if (siswaId == null || siswaId.isEmpty) {
+        try {
+          final odoo = OdooApiService();
+          await odoo.loadSession();
+          final children = await odoo.getChildren();
+          if (children.isNotEmpty) {
+            siswaId = children.first['id'].toString();
+            final prefs = await SharedPreferences.getInstance();
+            _currentSiswaId = siswaId;
+            await prefs.setString('siswa_id', siswaId);
+          }
+        } catch (_) {}
+      }
+
+      if (sessionId == null || sessionId.isEmpty || siswaId == null || siswaId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Session atau Siswa tidak tersedia. Silakan login.')),
+          );
+        }
+        return;
+      }
+
+      // Debug prints
+      // ignore: avoid_print
+      print('[StatusPage] Using sessionId=$sessionId siswaId=$siswaId');
+
+      final bills = await _paymentService.fetchBillsForSiswa(
+        sessionId: sessionId,
+        siswaId: siswaId,
+        page: 1,
+        limit: 50,
+      );
+
+      // ignore: avoid_print
+      print('[StatusPage] Fetched bills count=${bills.length}');
+
+      final selectedStudentName = context.read<AuthProvider>().selectedStudent;
+      final displayName = selectedStudentName.isEmpty ? _selectedStudent : selectedStudentName;
+
+      final items = bills.map((bill) {
+        PaymentStatus status;
+        switch (bill.status) {
+          case BillStatus.paid:
+            status = PaymentStatus.lunas;
+            break;
+          case BillStatus.partial:
+            status = PaymentStatus.sebagian;
+            break;
+          case BillStatus.unpaid:
+          case BillStatus.pending:
+          default:
+            status = PaymentStatus.belumLunas;
+            break;
+        }
+
+        return PaymentItem(
+          id: bill.id,
+          type: bill.title,
+          studentName: displayName,
+          amount: bill.amount,
+          dueDate: bill.dueDate,
+          status: status,
+        );
+      }).toList();
+
+      // ignore: avoid_print
+      print('[StatusPage] Mapped payments count=${items.length}');
+
+      if (!mounted) return;
+      setState(() {
+        _allPayments = items;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memuat pembayaran: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingPayments = false;
+        });
+      }
+    }
   }
 
   @override
@@ -118,8 +275,6 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
 
   List<PaymentItem> _getFilteredPayments() {
     List<PaymentItem> filtered = _allPayments;
-    // Filter by selected student
-    filtered = filtered.where((p) => p.studentName == _selectedStudent).toList();
     
     // Filter by tab
     final currentTab = _tabController.index;
@@ -131,28 +286,23 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
     
     // Filter by payment types
     filtered = filtered.where((payment) {
-      // If no payment types are selected, show nothing
-      if (!_paymentTypeFilters.values.any((selected) => selected)) {
+      final values = _paymentTypeFilters.values.toList();
+      final anySelected = values.any((v) => v);
+      final allSelected = values.every((v) => v);
+
+      // If no categories are selected at all, show nothing
+      if (!anySelected) {
         return false;
       }
-      
-      // Check if payment type matches any selected filter
-      final paymentType = payment.type.toLowerCase();
-      
-      return _paymentTypeFilters.entries.any((entry) {
-        if (!entry.value) return false; // Skip unselected types
-        
-        final filterType = entry.key.toLowerCase();
-        
-        // Direct matching and specific cases
-        return paymentType.contains(filterType) ||
-               paymentType.contains(filterType.replaceAll(' ', '')) ||
-               (filterType == 'spp' && paymentType.contains('spp')) ||
-               (filterType == 'uang tahunan' && (paymentType.contains('tahunan') || paymentType.contains('uang tahunan'))) ||
-               (filterType == 'seragam' && paymentType.contains('seragam')) ||
-               (filterType == 'uang pembangunan' && (paymentType.contains('pembangunan') || paymentType.contains('uang pembangunan'))) ||
-               (filterType == 'uang sumbangan' && (paymentType.contains('sumbangan') || paymentType.contains('uang sumbangan')));
-      });
+
+      // If all categories are selected (default state), do not filter by type
+      if (allSelected) {
+        return true;
+      }
+
+      // Otherwise, map payment.type ke kategori dan cek apakah dipilih
+      final cat = _getPaymentCategory(payment);
+      return _paymentTypeFilters[cat] == true;
     }).toList();
     
     // Filter by date range
@@ -162,18 +312,68 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
       }).toList();
     }
     
-    // Sort by order
-    if (_selectedSortOrder == 'Terbaru') {
-      filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
-    } else {
-      filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    // Sort by selected order
+    switch (_selectedSortOrder) {
+      case 'Terbaru':
+        // Newest due date first
+        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
+        break;
+      case 'Terlama':
+        // Oldest due date first
+        filtered.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+        break;
+      case 'Nominal Tertinggi':
+        // Highest nominal first
+        filtered.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case 'Nominal Terendah':
+        // Lowest nominal first
+        filtered.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      default:
+        filtered.sort((a, b) => b.dueDate.compareTo(a.dueDate));
     }
     
     return filtered;
   }
 
+  String _getPaymentCategory(PaymentItem payment) {
+    final text = payment.type.toLowerCase();
+
+    if (text.contains('spp')) return 'SPP';
+    if (text.contains('seragam')) return 'Seragam';
+    if (text.contains('makan')) return 'Makan';
+    if (text.contains('buku')) return 'Buku';
+    if (text.contains('kegiatan') || text.contains('ekstrakurikuler')) return 'Kegiatan';
+    return 'Lainnya';
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Listen to global selected student so changes from other pages keep this page in sync
+    String? providerStudent;
+    try {
+      providerStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      providerStudent = null;
+    }
+    if (providerStudent != null && providerStudent.isNotEmpty && providerStudent != _selectedStudent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        setState(() {
+          _selectedStudent = providerStudent!;
+        });
+        final id = _nameToSiswaId[_selectedStudent];
+        if (id != null && id.isNotEmpty) {
+          _currentSiswaId = id;
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('siswa_id', id);
+          } catch (_) {}
+        }
+        await _loadPaymentsFromServer();
+      });
+    }
     return Scaffold(
       body: Stack(
         children: [
@@ -226,9 +426,10 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
               title: AppLocalizations.of(context).pilihSantri,
               items: _students,
               selectedItem: _selectedStudent,
-              onItemSelected: (student) {
+              onItemSelected: (student) async {
+                await _onStudentChanged(student);
+                if (!mounted) return;
                 setState(() {
-                  _selectedStudent = student;
                   _isStudentOverlayVisible = false;
                 });
               },
@@ -258,16 +459,22 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
   }
 
   Widget _buildStudentSelector() {
-    return StudentSelectionWidget(
-      selectedStudent: _selectedStudent,
-      students: _students,
-      onStudentChanged: _onStudentChanged,
-      onOverlayVisibilityChanged: (visible) {
-        setState(() {
-          _isStudentOverlayVisible = visible;
-        });
-      },
-      avatarUrl: StudentData.defaultAvatarUrl,
+    return Opacity(
+      opacity: _isLoadingStudents ? 0.5 : 1,
+      child: AbsorbPointer(
+        absorbing: _isLoadingStudents,
+        child: StudentSelectionWidget(
+          selectedStudent: _selectedStudent,
+          students: _students.isEmpty ? [StudentData.defaultStudent] : _students,
+          onStudentChanged: _onStudentChanged,
+          onOverlayVisibilityChanged: (visible) {
+            setState(() {
+              _isStudentOverlayVisible = visible;
+            });
+          },
+          avatarUrl: StudentData.defaultAvatarUrl,
+        ),
+      ),
     );
   }
 
@@ -522,6 +729,8 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
         onApply: () {
           setState(() {});
           _scrollListToTop();
+          // Tutup bottom sheet setelah filter diterapkan
+          Navigator.pop(context);
         },
         onReset: () {
           setState(() {
@@ -626,12 +835,16 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
   }
 
   Widget _buildPaymentList() {
+    if (_isLoadingPayments) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     final filteredPayments = _getFilteredPayments();
-    
+
     if (filteredPayments.isEmpty) {
       return _buildEmptyState();
     }
-    
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       controller: _listController,
@@ -751,7 +964,7 @@ class _StatusPageState extends State<StatusPage> with TickerProviderStateMixin {
                       children: [
                         Text(AppLocalizations.of(context).namaSantri, style: AppStyles.bodyText(context).copyWith(color: Colors.grey[600], fontSize: 12)),
                         Text(
-                          payment.studentName,
+                          _selectedStudent,
                           style: AppStyles.bodyText(context).copyWith(fontWeight: FontWeight.w500, color: Colors.black87),
                         ),
                       ],

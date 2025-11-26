@@ -66,6 +66,8 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> with TickerProvider
   final PrestasiService _prestasiService = PrestasiService();
   Set<String> _expandedPrestasiIds = {}; // Track expanded prestasi items
 
+  bool _hasRetriedInit = false;
+
   // Tab Controller
   late TabController _tabController;
 
@@ -159,10 +161,15 @@ class _InfoAkademikPageState extends State<InfoAkademikPage> with TickerProvider
     try {
       final idStr = _selectedSiswaId;
       if (idStr == null || idStr.isEmpty) {
-        setState(() {
-          _isLoading = false;
-          _error = 'Siswa belum dipilih.';
-        });
+        if (!_hasRetriedInit) {
+          _hasRetriedInit = true;
+          await _initLoad();
+        } else {
+          setState(() {
+            _isLoading = false;
+            _error = 'Siswa belum dipilih.';
+          });
+        }
         return;
       }
       final id = int.tryParse(idStr) ?? -1;

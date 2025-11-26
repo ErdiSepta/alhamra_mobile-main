@@ -114,7 +114,10 @@ class _SearchOverlayWidgetState extends State<SearchOverlayWidget> {
                               trailing: item == widget.selectedItem
                                   ? const Icon(Icons.check, color: AppStyles.primaryColor)
                                   : null,
-                              onTap: () => widget.onItemSelected(item),
+                              onTap: () {
+                                widget.onItemSelected(item);
+                                widget.onClose();
+                              },
                             );
                           },
                         ),

@@ -11,8 +11,72 @@ import 'package:provider/provider.dart';
 import '../../core/data/payment_service.dart';
 import '../../core/services/odoo_api_service.dart';
 import '../../core/data/pocket_money_service.dart';
+import '../../core/data/canteen_service.dart';
 import '../../core/models/pocket_money_history.dart';
 import '../../core/providers/auth_provider.dart';
+import '../../core/data/tahfidz_service.dart';
+import '../../core/data/perizinan_service.dart';
+import '../../core/data/mutabaah_service.dart';
+import '../../core/data/kesehatan_service.dart';
+import '../../core/data/pelanggaran_service.dart';
+import '../../core/models/perizinan_history.dart';
+import '../../core/models/kesehatan_history.dart';
+import '../../core/models/pelanggaran_history.dart';
+import '../../core/models/absensi_model.dart';
+import 'package:intl/intl.dart';
+import 'dart:math' as math;
+
+/// Custom painter for circular progress indicator
+class CircleProgressPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final Color backgroundColor;
+  final double strokeWidth;
+
+  CircleProgressPainter({
+    required this.progress,
+    required this.color,
+    required this.backgroundColor,
+    this.strokeWidth = 8,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width - strokeWidth) / 2;
+
+    // Draw background circle
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = backgroundColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth,
+    );
+
+    // Draw progress arc
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    canvas.drawArc(
+      rect,
+      -math.pi / 2, // Start from top
+      (progress * 2 * math.pi), // Sweep angle
+      false,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(CircleProgressPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.color != color ||
+        oldDelegate.backgroundColor != backgroundColor;
+  }
+}
 
 class BerandaAllPage extends StatefulWidget {
   const BerandaAllPage({super.key});
@@ -38,6 +102,31 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   String _amountUangSaku = 'Rp 0';
   double _persentaseLunas = 0.0; // 0..100
 
+  // Kesantrian data state
+  bool _isLoadingKesantrian = false;
+  String _totalIzin = '0';
+  String _totalHafalan = '-';
+  String _totalSetoran = '0';
+  String _setoranTerakhir = '-';
+  String _setoranTanggal = '-';
+  String _mutabaahScore = '0';
+  String _mutabaahStatus = '-';
+  List<FlSpot> _setoranChartData = [];
+  int _totalSakitSemester = 0;
+  int _pelanggaranRingan = 0;
+  int _pelanggaranSedang = 0;
+  int _pelanggaranBerat = 0;
+  int _totalPerihal = 0;
+  int _totalTerapiKesehatan = 0;
+
+  // Services
+  final TahfidzService _tahfidzService = TahfidzService();
+  final PerizinanService _perizinanService = PerizinanService();
+  final MutabaahService _mutabaahService = MutabaahService();
+  final KesehatanService _kesehatanService = KesehatanService();
+  final PelanggaranService _pelanggaranService = PelanggaranService();
+  final CanteenService _canteenService = CanteenService();
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +135,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
       _loadBillsTotal();
       _loadPocketMoneyTotal();
       _initStudentSelection();
+      _loadKesantrianData();
     });
   }
 
@@ -185,25 +275,13 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   }
 
   Future<void> _loadPocketMoneyTotal() async {
-    try {
-      final pocketService = PocketMoneyService();
-      final pocket = await pocketService.fetchTransactions(page: 1, limit: 1000);
-      final totalIn = pocket
-          .where((t) => t.type == PocketMoneyTransactionType.incoming)
-          .fold<int>(0, (p, e) => p + e.amount);
-      final totalOut = pocket
-          .where((t) => t.type == PocketMoneyTransactionType.outgoing)
-          .fold<int>(0, (p, e) => p + e.amount);
-      final saldoUangSaku = totalIn - totalOut;
-      final saldoWallet = totalIn - totalOut; // Adjust if wallet logic differs
-      print('[DEBUG] saldoUangSaku (raw): $saldoUangSaku');
-      print('[DEBUG] saldoWallet (raw): $saldoWallet');
-      if (!mounted) return;
-      setState(() {
-        _saldoUangSaku = _formatRupiah(saldoUangSaku < 0 ? 0 : saldoUangSaku);
-        _saldoWallet = _formatRupiah(saldoWallet < 0 ? 0 : saldoWallet);
-      });
-    } catch (_) {}
+    // Dummy data: tidak lagi menghitung dari API, hanya menampilkan nilai tetap.
+    if (!mounted) return;
+    setState(() {
+      // Ubah angka di sini jika ingin nilai dummy berbeda.
+      _saldoUangSaku = _formatRupiah(0);
+      _saldoWallet = _formatRupiah(15300);
+    });
   }
 
   @override
@@ -214,6 +292,26 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
+    // Sync with global selected student so changes from other pages propagate here
+    String? providerStudent;
+    try {
+      providerStudent = context.watch<AuthProvider>().selectedStudent;
+    } catch (_) {
+      providerStudent = null;
+    }
+    if (providerStudent != null && providerStudent.isNotEmpty && providerStudent != _selectedSantri) {
+      _selectedSantri = providerStudent;
+      final siswaId = _nameToId[_selectedSantri];
+      if (siswaId != null && siswaId.isNotEmpty) {
+        _selectedSiswaId = siswaId;
+        SharedPreferences.getInstance().then((prefs) {
+          prefs.setString('siswa_id', siswaId);
+        });
+      }
+      _loadBillsTotal();
+      _loadPocketMoneyTotal();
+      _loadKesantrianData();
+    }
     return Stack(
       children: [
         // Main scaffold
@@ -335,6 +433,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
     } catch (_) {}
     _loadBillsTotal();
     _loadPocketMoneyTotal();
+    _loadKesantrianData();
   }
 
   Widget _buildTabBar() {
@@ -373,6 +472,7 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
 
 
   Widget _buildSemuaTab() {
+    final localizations = AppLocalizations.of(context);
     return Container(
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
@@ -380,13 +480,22 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Keuangan overview
             _buildKeuanganCards(),
             const SizedBox(height: 20),
-            // TODO: Replace with live kesantrian data
-            SizedBox(height: 100, child: Center(child: Text('Kesantrian (live data TODO)'))),
-            const SizedBox(height: 20),
-            // TODO: Replace with live akademik data
-            SizedBox(height: 100, child: Center(child: Text('Akademik (live data TODO)'))),
+
+            // Kesantrian overview (reuse same cards as Kesantrian tab)
+            _buildPerizinanCard(localizations),
+            const SizedBox(height: 16),
+            _buildTahfidzCard(localizations),
+            const SizedBox(height: 16),
+            _buildSetoranTerakhirCard(localizations),
+            const SizedBox(height: 16),
+            _buildPerkembanganSetoranCard(localizations),
+            const SizedBox(height: 16),
+            _buildMutabaahHarianCard(localizations),
+            const SizedBox(height: 16),
+            _buildAktivitasKesehatan(localizations),
           ],
         ),
       ),
@@ -404,29 +513,370 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   }
 
   Widget _buildKesantrianTab() {
+    final localizations = AppLocalizations.of(context);
     return Container(
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        // TODO: Replace with live kesantrian data
-        child: SizedBox(height: 100, child: Center(child: Text('Kesantrian (live data TODO)'))),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Perizinan Card
+            _buildPerizinanCard(localizations),
+            const SizedBox(height: 16),
+            // Tahfidz Al-Quran Card
+            _buildTahfidzCard(localizations),
+            const SizedBox(height: 16),
+            // Setoran Terakhir Card
+            _buildSetoranTerakhirCard(localizations),
+            const SizedBox(height: 16),
+            // Perkembangan Setoran Card
+            _buildPerkembanganSetoranCard(localizations),
+            const SizedBox(height: 16),
+            // Mutabaah Harian Card
+            _buildMutabaahHarianCard(localizations),
+            const SizedBox(height: 16),
+            // Aktivitas & Kesehatan Card
+            _buildAktivitasKesehatan(localizations),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildAkademikTab() {
+    final localizations = AppLocalizations.of(context);
+
+    // Dummy akademik overview menggunakan sample data dashboard
+    final akademikOverview = DashboardData.getSampleData().akademik;
+
+    // Dummy data absensi untuk presentasi & distribusi kehadiran
+    final attendance = AttendanceData.createMock('1');
     return Container(
       color: AppStyles.greyColor,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        // TODO: Replace with live akademik data
-        child: SizedBox(height: 100, child: Center(child: Text('Akademik (live data TODO)'))),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildAkademikAttendanceCard(
+              localizations,
+              attendancePercentage: attendance.attendancePercentage,
+              hadir: attendance.hadirCount,
+              izin: attendance.izinCount,
+              alpha: attendance.alphaCount,
+            ),
+            const SizedBox(height: 16),
+            _buildAkademikCard(akademikOverview, isFullPage: true),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAkademikAttendanceCard(
+    AppLocalizations localizations, {
+    required double attendancePercentage,
+    required int hadir,
+    required int izin,
+    required int alpha,
+  }) {
+    final statusText = attendancePercentage >= 95
+        ? 'Excellent'
+        : attendancePercentage >= 90
+            ? 'Very Good'
+            : attendancePercentage >= 80
+                ? 'Good'
+                : 'Needs Improvement';
+
+    // Hitung persentase distribusi berdasarkan jumlah hari
+    final totalDays = hadir + izin + alpha;
+    final hadirPercent = totalDays > 0 ? (hadir / totalDays) * 100 : 0.0;
+    final izinPercent = totalDays > 0 ? (izin / totalDays) * 100 : 0.0;
+    final alphaPercent = totalDays > 0 ? (alpha / totalDays) * 100 : 0.0;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  localizations.kehadiran,
+                  style: AppStyles.heading2(context),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F5E9),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 11,
+                      color: const Color(0xFF2E7D32),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: AppStyles.primaryColor.withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '${attendancePercentage.toStringAsFixed(1)}%',
+                          style: AppStyles.heading2(context).copyWith(
+                            fontSize: 20,
+                            color: AppStyles.primaryColor,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Kehadiran',
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 11,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Hadir', style: AppStyles.sectionTitle(context)),
+                          Text('$hadir hari', style: AppStyles.sectionTitle(context)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Izin', style: AppStyles.sectionTitle(context)),
+                          Text('$izin hari', style: AppStyles.sectionTitle(context)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Alpha', style: AppStyles.sectionTitle(context)),
+                          Text('$alpha hari', style: AppStyles.sectionTitle(context)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Divider(color: Colors.grey[300]),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Distribusi Kehadiran',
+                  style: AppStyles.heading2(context).copyWith(fontSize: 16),
+                ),
+                const Icon(
+                  Icons.pie_chart_outline,
+                  size: 20,
+                  color: Colors.blueGrey,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: SizedBox(
+                height: 220,
+                width: 220,
+                child: PieChart(
+                  PieChartData(
+                    sectionsSpace: 2,
+                    centerSpaceRadius: 50,
+                    sections: [
+                      PieChartSectionData(
+                        color: const Color(0xFF4CAF50),
+                        value: hadirPercent,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFF4CAF50),
+                          text: 'Hadir ${hadirPercent.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                      PieChartSectionData(
+                        color: const Color(0xFFFFA000),
+                        value: izinPercent,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFFFFA000),
+                          text: 'Izin ${izinPercent.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                      PieChartSectionData(
+                        color: const Color(0xFFD32F2F),
+                        value: alphaPercent,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFFD32F2F),
+                          text: 'Alpha ${alphaPercent.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAkademikDistributionCard(
+    AppLocalizations localizations, {
+    required double hadirPercent,
+    required double izinPercent,
+    required double alphaPercent,
+  }) {
+    final totalPercent = hadirPercent + izinPercent + alphaPercent;
+    final safeHadir = totalPercent == 0 ? 0.0 : hadirPercent;
+    final safeIzin = totalPercent == 0 ? 0.0 : izinPercent;
+    final safeAlpha = totalPercent == 0 ? 0.0 : alphaPercent;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Distribusi Kehadiran',
+                  style: AppStyles.heading2(context),
+                ),
+                const Icon(
+                  Icons.pie_chart_outline,
+                  size: 20,
+                  color: Colors.blueGrey,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Center(
+              child: SizedBox
+              (
+                height: 220,
+                width: 220,
+                child: PieChart(
+                  PieChartData(
+                    sectionsSpace: 2,
+                    centerSpaceRadius: 50,
+                    sections: [
+                      PieChartSectionData(
+                        color: const Color(0xFF4CAF50),
+                        value: safeHadir,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFF4CAF50),
+                          text: 'Hadir ${safeHadir.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                      PieChartSectionData(
+                        color: const Color(0xFFFFA000),
+                        value: safeIzin,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFFFFA000),
+                          text: 'Izin ${safeIzin.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                      PieChartSectionData(
+                        color: const Color(0xFFD32F2F),
+                        value: safeAlpha,
+                        title: '',
+                        radius: 60,
+                        badgeWidget: _buildPieLabel(
+                          color: const Color(0xFFD32F2F),
+                          text: 'Alpha ${safeAlpha.toStringAsFixed(1)}%',
+                        ),
+                        badgePositionPercentageOffset: 1.8,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildKeuanganCards() {
     final localizations = AppLocalizations.of(context);
+    // Persentase dibulatkan untuk tampilan pie chart dan legend
+    final double lunasPercent = _persentaseLunas.clamp(0.0, 100.0);
+    final double kurangPercent = (100.0 - lunasPercent).clamp(0.0, 100.0);
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -632,51 +1082,63 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
               ),
             ),
             const SizedBox(height: 24),
-            // Pie Chart
-            Center(
-              child: SizedBox(
-                height: 200,
-                width: 200,
-                child: PieChart(
-                  PieChartData(
-                    sections: [
-                      PieChartSectionData(
-                        color: const Color(0xFF2196F3),
-                        value: _persentaseLunas,
-                        title: '${localizations.lunas}\n${_persentaseLunas.toInt()}%',
-                        radius: 80,
-                        titleStyle: AppStyles.sectionTitle(context).copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        titlePositionPercentageOffset: 0.6,
+            // Pie Chart with Legend Below
+            Column(
+              children: [
+                Center(
+                  child: SizedBox(
+                    height: 240,
+                    width: 240,
+                    child: PieChart(
+                      PieChartData(
+                        sections: [
+                          PieChartSectionData(
+                            color: const Color(0xFF2196F3),
+                            value: lunasPercent,
+                            radius: 72,
+                            title: '',
+                            badgeWidget: _buildPieLabel(
+                              color: const Color(0xFF2196F3),
+                              text: '${localizations.lunas} ${lunasPercent.toStringAsFixed(0)}%',
+                            ),
+                            badgePositionPercentageOffset: 1.9,
+                            borderSide: const BorderSide(
+                              color: Colors.white,
+                              width: 1,
+                            ),
+                          ),
+                          PieChartSectionData(
+                            color: const Color(0xFFFF5252),
+                            value: kurangPercent,
+                            radius: 72,
+                            title: '',
+                            badgeWidget: _buildPieLabel(
+                              color: const Color(0xFFFF5252),
+                              text: '${localizations.kurang} ${kurangPercent.toStringAsFixed(0)}%',
+                            ),
+                            badgePositionPercentageOffset: 1.9,
+                            borderSide: const BorderSide(
+                              color: Colors.white,
+                              width: 1,
+                            ),
+                          ),
+                        ],
+                        sectionsSpace: 2,
+                        centerSpaceRadius: 0,
                       ),
-                      PieChartSectionData(
-                        color: const Color(0xFFFF5252),
-                        value: 100 - _persentaseLunas,
-                        title: '${localizations.kurang}\n${(100 - _persentaseLunas).toInt()}%',
-                        radius: 80,
-                        titleStyle: AppStyles.sectionTitle(context).copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        titlePositionPercentageOffset: 0.6,
-                      ),
-                    ],
-                    sectionsSpace: 2,
-                    centerSpaceRadius: 0,
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Legend
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildLegend(const Color(0xFF2196F3), localizations.lunas),
-                const SizedBox(width: 32),
-                _buildLegend(const Color(0xFFFF5252), localizations.kurang),
+                const SizedBox(height: 20),
+                // Legend Below Chart
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildLegend(const Color(0xFF2196F3), '${localizations.lunas} ${lunasPercent.toStringAsFixed(0)}%'),
+                    const SizedBox(width: 40),
+                    _buildLegend(const Color(0xFFFF5252), '${localizations.kurang} ${kurangPercent.toStringAsFixed(0)}%'),
+                  ],
+                ),
               ],
             ),
           ],
@@ -921,12 +1383,845 @@ class _BerandaAllPageState extends State<BerandaAllPage> with SingleTickerProvid
   }
 
 
+  Future<void> _loadKesantrianData() async {
+    setState(() {
+      _isLoadingKesantrian = true;
+    });
+    try {
+      String? siswaId = _selectedSiswaId;
+      if (siswaId == null || siswaId.isEmpty) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          siswaId = prefs.getString('siswa_id');
+        } catch (_) {}
+      }
+      if (siswaId == null || siswaId.isEmpty) return;
+
+      // Load all Kesantrian data in parallel
+      final tahfidzFuture = _tahfidzService.fetchRiwayat(siswaId: siswaId, limit: 100);
+      final perizinanFuture = _perizinanService.fetchRiwayat(siswaId: siswaId, limit: 100);
+      final mutabaahFuture = _mutabaahService.fetchRiwayat(siswaId: siswaId, limit: 100);
+      final kesehatanFuture = _kesehatanService.fetchRiwayat(siswaId: siswaId, limit: 100);
+      final pelanggaranFuture = _pelanggaranService.fetchRiwayat(siswaId: siswaId, limit: 100);
+
+      final results = await Future.wait([
+        tahfidzFuture,
+        perizinanFuture,
+        mutabaahFuture,
+        kesehatanFuture,
+        pelanggaranFuture,
+      ], eagerError: false);
+
+      if (!mounted) return;
+
+      final tahfidzList = results[0] as List<TahfidzServerItem>;
+      final perizinanList = results[1] as List<PerizinanHistory>;
+      final mutabaahList = results[2] as List<MutabaahServerItem>;
+      final kesehatanList = results[3] as List<KesehatanHistory>;
+      final pelanggaranList = results[4] as List<PelanggaranHistory>;
+
+      // Process Tahfidz data
+      int totalHafalan = 0;
+      String setoranTerakhir = '-';
+      String setoranTanggal = '-';
+      final chartData = <FlSpot>[];
+      
+      if (tahfidzList.isNotEmpty) {
+        totalHafalan = tahfidzList.length;
+        final lastEntry = tahfidzList.first;
+        setoranTerakhir = lastEntry.surahName;
+        setoranTanggal = DateFormat('dd MMM yyyy', 'id_ID').format(lastEntry.tanggal);
+        
+        // Build chart data (last 6 entries)
+        final chartEntries = tahfidzList.take(6).toList().reversed.toList();
+        for (int i = 0; i < chartEntries.length; i++) {
+          chartData.add(FlSpot(i.toDouble(), (i + 1) * 50.0));
+        }
+      }
+
+      // Process Perizinan data
+      final totalIzin = perizinanList.length;
+
+      // Process Mutabaah data
+      String mutabaahScore = '0';
+      String mutabaahStatus = '-';
+      if (mutabaahList.isNotEmpty) {
+        final latestMutabaah = mutabaahList.first;
+        // Bersihkan nilai skor agar hanya angka (misal "9" dari "9 dari 9")
+        final rawScore = latestMutabaah.totalSkor ?? '';
+        final match = RegExp(r'\d+').firstMatch(rawScore);
+        mutabaahScore = match?.group(0) ?? rawScore;
+        mutabaahStatus = latestMutabaah.status;
+      }
+
+      // Process Kesehatan data
+      final totalSakitSemester = kesehatanList.length;
+
+      // Process Pelanggaran data
+      int pelanggaranRingan = 0;
+      int pelanggaranSedang = 0;
+      int pelanggaranBerat = 0;
+      for (final p in pelanggaranList) {
+        if (p.status.toLowerCase().contains('ringan')) {
+          pelanggaranRingan++;
+        } else if (p.status.toLowerCase().contains('sedang')) {
+          pelanggaranSedang++;
+        } else if (p.status.toLowerCase().contains('berat')) {
+          pelanggaranBerat++;
+        }
+      }
+
+      setState(() {
+        _totalIzin = totalIzin.toString();
+        _totalHafalan = totalHafalan.toString();
+        _totalSetoran = totalHafalan.toString();
+        _setoranTerakhir = setoranTerakhir;
+        _setoranTanggal = setoranTanggal;
+        _mutabaahScore = mutabaahScore;
+        _mutabaahStatus = mutabaahStatus;
+        _setoranChartData = chartData;
+        _totalSakitSemester = totalSakitSemester;
+        _pelanggaranRingan = pelanggaranRingan;
+        _pelanggaranSedang = pelanggaranSedang;
+        _pelanggaranBerat = pelanggaranBerat;
+        _totalPerihal = pelanggaranList.length;
+        _totalTerapiKesehatan = kesehatanList.length;
+        _isLoadingKesantrian = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      print('Error loading Kesantrian data: $e');
+      setState(() {
+        _isLoadingKesantrian = false;
+      });
+    }
+  }
+
   Widget _buildLegend(Color color, String text) {
     return Row(
       children: [
         Container(width: 16, height: 16, color: color),
         const SizedBox(width: 8),
-        Text(text),
+        Text(
+          text,
+          style: AppStyles.sectionTitle(context).copyWith(
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Label kecil di luar pie chart untuk menampilkan persentase
+  Widget _buildPieLabel({required Color color, required String text}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppStyles.sectionTitle(context).copyWith(
+          fontSize: 16,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPerizinanCard(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  localizations.perizinan,
+                  style: AppStyles.heading2(context),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '2025',
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Content
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE3F2FD),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    localizations.totalIzin,
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _totalIzin,
+                    style: AppStyles.heading1(context).copyWith(
+                      color: const Color(0xFF1976D2),
+                      fontSize: 28,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTahfidzCard(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  localizations.tahfidz,
+                  style: AppStyles.heading2(context),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '2025',
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Two column layout (Poin Pelanggaran & Total Prestasi)
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE3F2FD),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          localizations.totalHafalan,
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _totalHafalan,
+                          style: AppStyles.heading1(context).copyWith(
+                            color: const Color(0xFF1976D2),
+                            fontSize: 24,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E8),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          localizations.totalSetoran,
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _totalSetoran,
+                          style: AppStyles.heading1(context).copyWith(
+                            color: const Color(0xFF2E7D32),
+                            fontSize: 24,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          localizations.setoranSetoran,
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 11,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetoranTerakhirCard(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              localizations.setoranTerakhir,
+              style: AppStyles.heading2(context),
+            ),
+            const SizedBox(height: 16),
+            // Setoran item
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _setoranTerakhir,
+                        style: AppStyles.sectionTitle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _setoranTanggal,
+                        style: AppStyles.sectionTitle(context).copyWith(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    _setoranTanggal,
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPerkembanganSetoranCard(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              localizations.perkembanganSetoran,
+              style: AppStyles.heading2(context),
+            ),
+            const SizedBox(height: 16),
+            // Chart
+            SizedBox(
+              height: 180,
+              child: LineChart(
+                LineChartData(
+                  gridData: const FlGridData(show: false),
+                  titlesData: FlTitlesData(
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 30,
+                        getTitlesWidget: (value, meta) {
+                          const months = ['Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt'];
+                          if (value.toInt() < months.length) {
+                            return SideTitleWidget(
+                              axisSide: meta.axisSide,
+                              child: Text(months[value.toInt()], style: const TextStyle(fontSize: 10)),
+                            );
+                          }
+                          return const Text('');
+                        },
+                      ),
+                    ),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  minY: 0,
+                  maxY: 300,
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: _setoranChartData.isEmpty
+                          ? const [
+                              FlSpot(0, 50),
+                              FlSpot(1, 120),
+                              FlSpot(2, 100),
+                              FlSpot(3, 180),
+                              FlSpot(4, 150),
+                              FlSpot(5, 200),
+                            ]
+                          : _setoranChartData,
+                      isCurved: true,
+                      color: AppStyles.primaryColor,
+                      barWidth: 4,
+                      isStrokeCapRound: true,
+                      dotData: const FlDotData(show: false),
+                      belowBarData: BarAreaData(
+                        show: true,
+                        color: AppStyles.primaryColor.withOpacity(0.2),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMutabaahHarianCard(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              localizations.mutabaahHarian,
+              style: AppStyles.heading2(context),
+            ),
+            const SizedBox(height: 20),
+            // Circular score display
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 88,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppStyles.primaryColor,
+                    ),
+                    child: Center(
+                      child: Builder(
+                        builder: (context) {
+                          // Ambil hanya bagian pertama sebelum spasi (misal "9" dari "9 dari 9")
+                          final displayScore = (_mutabaahScore.split(' ').isNotEmpty)
+                              ? _mutabaahScore.split(' ').first
+                              : _mutabaahScore;
+                          return FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              displayScore,
+                              maxLines: 1,
+                              textAlign: TextAlign.center,
+                              style: AppStyles.heading1(context).copyWith(
+                                color: Colors.white,
+                                fontSize: 36,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    localizations.skorHariIni,
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      _mutabaahStatus,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppStyles.sectionTitle(context).copyWith(
+                        color: const Color(0xFF4CAF50),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAktivitasKesehatan(AppLocalizations localizations) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  localizations.aktivitasKesehatan,
+                  style: AppStyles.heading2(context),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '2025',
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Two column layout
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.warning, color: Color(0xFFFFA726), size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Poin Pelanggaran',
+                              style: AppStyles.sectionTitle(context).copyWith(
+                                fontSize: 12,
+                                color: const Color(0xFFFFA726),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _totalPerihal.toString(),
+                          style: AppStyles.heading1(context).copyWith(
+                            color: const Color(0xFFFFA726),
+                            fontSize: 24,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Hati-hati',
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 11,
+                            color: const Color(0xFFFFA726),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E8),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Total Prestasi',
+                              style: AppStyles.sectionTitle(context).copyWith(
+                                fontSize: 12,
+                                color: const Color(0xFF2E7D32),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _totalTerapiKesehatan.toString(),
+                          style: AppStyles.heading1(context).copyWith(
+                            color: const Color(0xFF2E7D32),
+                            fontSize: 24,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+            // Total Sakit Semester Ini
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFEBEE),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    localizations.totalSakitSemesterIni,
+                    style: AppStyles.sectionTitle(context).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text(
+                        '${_totalSakitSemester}x',
+                        style: AppStyles.sectionTitle(context).copyWith(
+                          color: const Color(0xFFD32F2F),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Terakhir: -',
+                          style: AppStyles.sectionTitle(context).copyWith(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.thermostat,
+                        size: 18,
+                        color: Color(0xFFD32F2F),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Jenis Pelanggaran
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  localizations.jenisPelanggaran,
+                  style: AppStyles.sectionTitle(context),
+                ),
+                const SizedBox(height: 12),
+                _buildViolationItem('Ringan', _pelanggaranRingan.toString()),
+                const SizedBox(height: 8),
+                _buildViolationItem('Sedang', _pelanggaranSedang.toString()),
+                const SizedBox(height: 8),
+                _buildViolationItem('Berat', _pelanggaranBerat.toString()),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViolationItem(String label, String count) {
+    final colors = {
+      'Ringan': const Color(0xFFFFF9C4),
+      'Sedang': const Color(0xFFFFE0B2),
+      'Berat': const Color(0xFFFFCDD2),
+    };
+    final textColors = {
+      'Ringan': const Color(0xFFF57F17),
+      'Sedang': const Color(0xFFF57C00),
+      'Berat': const Color(0xFFD32F2F),
+    };
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: AppStyles.sectionTitle(context).copyWith(
+            fontSize: 12,
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: colors[label] ?? Colors.grey[200],
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            count,
+            style: TextStyle(
+              color: textColors[label] ?? Colors.grey[600],
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ),
       ],
     );
   }

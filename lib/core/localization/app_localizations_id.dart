@@ -498,4 +498,30 @@ class AppLocalizationsId extends AppLocalizations {
   String get ustadPembimbing => 'Ustad Pembimbing';
   @override
   String get pencatat => 'Pencatat';
+
+  // Kesantrian Content
+  @override
+  String get totalIzin => 'Total Izin';
+  @override
+  String get totalSetoran => 'Total Setoran';
+  @override
+  String get setoranSetoran => 'Setoran';
+  @override
+  String get setoranTerakhir => 'Setoran Terakhir';
+  @override
+  String get perkembanganSetoran => 'Perkembangan Setoran';
+  @override
+  String get mutabaahHarian => 'Mutabaah Harian';
+  @override
+  String get skorHariIni => 'Skor Hari Ini';
+  @override
+  String get aktivitasKesehatan => 'Aktivitas & Kesehatan';
+  @override
+  String get perihal => 'Perihal';
+  @override
+  String get terapiKesehatan => 'Terapi Kesehatan';
+  @override
+  String get totalSakitSemesterIni => 'Total Sakit Semester Ini';
+  @override
+  String get jenisPelanggaran => 'Jenis Pelanggaran';
 }

@@ -8,7 +8,6 @@ import '../../../core/utils/app_styles.dart';
 import '../../shared/widgets/history_filter_widget.dart';
 import 'detail_uang_saku_page.dart';
 import '../../../core/data/pocket_money_service.dart';
-import '../../../core/data/canteen_service.dart';
 import '../../../core/providers/auth_provider.dart';
 
 class RiwayatUangSakuPage extends StatefulWidget {
@@ -25,7 +24,6 @@ class _RiwayatUangSakuPageState extends State<RiwayatUangSakuPage>
   String _selectedPeriod = 'Bulan Ini';
   String _selectedCategory = 'Pemasukan';
   final PocketMoneyService _service = PocketMoneyService();
-  final CanteenService _canteenService = CanteenService();
   bool _loading = false;
   String? _errorMessage;
   List<PocketMoneyHistory> _apiTransactions = [];
@@ -302,8 +300,25 @@ class _RiwayatUangSakuPageState extends State<RiwayatUangSakuPage>
           : t.type == PocketMoneyTransactionType.outgoing;
       final inRange = !t.date.isBefore(range.start) && !t.date.isAfter(range.end);
       return typeOk && inRange;
-    }).toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+    }).toList();
+
+    // Urutkan sesuai _reportSortOrder
+    switch (_reportSortOrder) {
+      case 'Terbaru':
+        list.sort((a, b) => b.date.compareTo(a.date));
+        break;
+      case 'Terlama':
+        list.sort((a, b) => a.date.compareTo(b.date));
+        break;
+      case 'Nominal Tertinggi':
+        list.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case 'Nominal Terendah':
+        list.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      default:
+        list.sort((a, b) => b.date.compareTo(a.date));
+    }
     return list;
   }
 
@@ -900,7 +915,8 @@ class _RiwayatUangSakuPageState extends State<RiwayatUangSakuPage>
               _reportEndDate = tempEndDate;
             }
           });
-          // Do not pop here; the sheet will pop itself in HistoryFilterWidget
+          // Tutup bottom sheet setelah filter diterapkan
+          Navigator.pop(context);
         },
         onReset: () {
           setState(() {
@@ -992,11 +1008,8 @@ class _RiwayatUangSakuPageState extends State<RiwayatUangSakuPage>
     });
     try {
       final list = await _service.fetchTransactions(page: 1, limit: 100);
-      // Fetch kantin and merge as outgoing transactions
-      final canteen = await _canteenService.fetchCanteenTransactions(page: 1, limit: 100);
-      final merged = <PocketMoneyHistory>[...list, ...canteen];
       // Sort desc by date to keep newest first
-      merged.sort((a, b) => b.date.compareTo(a.date));
+      final merged = <PocketMoneyHistory>[...list]..sort((a, b) => b.date.compareTo(a.date));
       setState(() {
         _apiTransactions = merged;
         _loading = false;
